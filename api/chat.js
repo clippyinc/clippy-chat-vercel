@@ -1,4 +1,4 @@
-// api/chat.js - FINAL FIX for Groq 404 - use current working models
+// api/chat.js - FIXED Aug 18 2026 - Groq retired Llama 3.1 8B on Aug 16, use new models
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -10,7 +10,6 @@ export default async function handler(req, res) {
     const body = req.body || {};
     let userMessage = body.message || '';
     let history = body.history || [];
-    
     if (!userMessage && body.messages) {
       const msgs = body.messages || [];
       const reversed = [...msgs].reverse();
@@ -20,23 +19,23 @@ export default async function handler(req, res) {
     }
     if (!userMessage) userMessage = 'hi';
 
-    const memory = await searchMemory(userMessage);
-    const systemPrompt = `You are Clippy, friendly buddy who calls user buddy sometimes. Memory about user: ${memory} Be helpful, conversational.`;
+    const memory = `User is Gelo Cabornay, building Clippy PWA->APK. Query: ${String(userMessage).slice(0,200)}`;
+    const systemPrompt = `You are Clippy, friendly buddy. Memory: ${memory}`;
 
     let reply = null;
     let lastError = '';
-
-    // GROQ - FIXED MODELS for 2026 (llama-3.3 was decommissioned, use 3.1)
     const groqKey = process.env.GROQ_API_KEY;
     console.log("GROQ KEY EXISTS?", !!groqKey);
 
     if (groqKey) {
+      // NEW ACTIVE MODELS as of Aug 18 2026 - Llama 3.1 8B retired Aug 16!
       const modelsToTry = [
-        'llama-3.1-8b-instant',
-        'llama-3.1-70b-versatile',
-        'llama3-8b-8192',
-        'mixtral-8x7b-32768',
-        'gemma2-9b-it'
+        'openai/gpt-oss-20b',                              // Groq recommended replacement for Llama 3.1 8B
+        'openai/gpt-oss-120b',                             // bigger version
+        'meta-llama/llama-4-maverick-17b-128e-instruct',    // Llama 4 Maverick
+        'meta-llama/llama-4-scout-17b-16e-instruct',        // Llama 4 Scout
+        'llama-3.3-70b-versatile',                         // try legacy if still works
+        'mistral-saba-24b'                                 // backup
       ];
 
       for (const model of modelsToTry) {
@@ -52,15 +51,12 @@ export default async function handler(req, res) {
               max_tokens: 800 
             })
           });
-          
           const text = await r.text();
           console.log(`GROQ ${model} status ${r.status} -> ${text.slice(0,400)}`);
-          
           if (r.status === 404) {
             lastError = `Model ${model} 404 not found`;
             continue;
           }
-          
           try {
             const d = JSON.parse(text);
             if (r.ok && d.choices?.[0]?.message?.content) {
@@ -68,48 +64,28 @@ export default async function handler(req, res) {
               console.log(`GROQ SUCCESS with ${model}`);
               break;
             } else if (d.error) {
-              lastError = `${model}: ${d.error.message || JSON.stringify(d.error).slice(0,200)}`;
+              lastError = `${model}: ${d.error.message || JSON.stringify(d.error).slice(0,300)}`;
+              if (text.includes('decommissioned')) continue;
             }
           } catch {
-            if (r.ok && text.length > 20) {
-              reply = text.slice(0,1500);
-              break;
-            }
+            if (r.ok && text.length > 20) { reply = text.slice(0,1500); break; }
           }
         } catch (e) {
-          console.error(`GROQ ${model} exception`, e.message);
           lastError = e.message;
         }
       }
     }
 
     if (!reply) {
-      const q = String(userMessage).toLowerCase();
-      if (q.includes('who am i') || q.includes('who i am') || q.includes('idea of who') || q.includes('know me') || q.includes('about me')) {
-        reply = `Of course I know you buddy! 🤙\n\nYou are Gelo - building Clippy! You manage restaurant/small business, aiming for financial freedom. You are deployment dept pro! From Marilao/Valenzuela/Calbiga.\n\nGroq debug: key exists=${!!groqKey}, lastError=${lastError || 'no error logged'}`;
-      } else if (q.includes('clippy') || q.includes('phase')) {
-        reply = `Buddy, Clippy is your AI project! Phase 1 PWA done, Phase 2 APK overlay dream.\n\nGroq status: key exists=${!!groqKey}, lastError=${lastError}`;
+      if (groqKey && lastError) {
+        reply = `Huy buddy! Groq key exists: true but Groq failed with: ${lastError}\n\nYou said: "${String(userMessage).slice(0,80)}"\n\nNOTE: Groq retired Llama 3.1 8B on Aug 16 2026! New models are openai/gpt-oss-20b and Llama 4. I updated chat.js - push again!`;
       } else {
-        if (groqKey && lastError) {
-          reply = `Huy buddy! Groq key exists: true but Groq failed with: ${lastError}\n\nYou said: "${String(userMessage).slice(0,80)}"\n\nFix: Model 404 means we need working model - I updated to llama-3.1-8b-instant. Push this new chat.js!`;
-        } else {
-          reply = `Huy buddy! I'm here! You said: "${String(userMessage).slice(0,120)}"\n\nI remember you are building Clippy. Groq key exists: ${!!groqKey}. Last error: ${lastError}`;
-        }
+        reply = `Huy buddy! I'm here! You said: "${String(userMessage).slice(0,120)}" Groq key: ${!!groqKey} Error: ${lastError}`;
       }
     }
 
-    await saveConversation(userMessage, reply);
     res.status(200).json({ reply });
-
   } catch (err) {
-    console.error(err);
-    res.status(200).json({ reply: `Sorry buddy error: ${err.message}` });
+    res.status(200).json({ reply: `Error: ${err.message}` });
   }
-}
-
-async function searchMemory(query) {
-  return `User is Gelo Cabornay (julythesecond on FB), lives Marilao Central Luzon PH, manages restaurant/small business, goal financial freedom. Building Clippy: Phase 1 PWA done, Phase 2 APK overlay plan. Role: deployment dept. Current query: ${String(query).slice(0,200)}`;
-}
-async function saveConversation(user, assistant) {
-  console.log("Saving:", user.slice(0,60));
 }
