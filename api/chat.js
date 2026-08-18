@@ -20,13 +20,14 @@ export default async function handler(req, res) {
     if (!userMessage) userMessage = 'hi';
 
     const now = new Date().toLocaleString("en-PH", { 
-      timeZone: "Asia/Manila", 
-      dateStyle: "full", 
-      timeStyle: "long",
+      timeZone: "Asia/Manila",
       weekday: "long",
       year: "numeric",
       month: "long",
-      day: "numeric"
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
     });
 
     const coreIdentity = `
