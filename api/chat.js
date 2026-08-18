@@ -19,8 +19,9 @@ export default async function handler(req, res) {
     }
     if (!userMessage) userMessage = 'hi';
 
-    const memory = `User is Gelo Cabornay, building Clippy PWA->APK. Query: ${String(userMessage).slice(0,200)}`;
-    const systemPrompt = `You are Clippy, friendly buddy. Memory: ${memory}`;
+    const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "full", timeStyle: "short" });
+    const memory = `User is Gelo Cabornay (julythesecond on FB), lives Marilao PH, manages restaurant/small business, goal financial freedom. Building Clippy PWA->APK overlay (Phase 1 PWA done, Phase 2 APK dream). Current date/time Manila: ${now}.`;
+    const systemPrompt = `You are Clippy, a custom PWA chat assistant built by Gelo, NOT Microsoft Office paperclip. You are friendly, you call user buddy sometimes. You live at clippy-chat-vercel.vercel.app. Your emoji is 🤖📎. Memory: ${memory}. Today is ${now}. Remember conversation history well - you have unlimited slice now!`;
 
     let reply = null;
     let lastError = '';
@@ -46,7 +47,7 @@ export default async function handler(req, res) {
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
             body: JSON.stringify({ 
               model, 
-              messages: [{ role: 'system', content: systemPrompt }, ...history.slice(-6), { role: 'user', content: userMessage }], 
+              messages: [{ role: 'system', content: systemPrompt }, ...history.slice(-100), { role: 'user', content: userMessage }], 
               temperature: 0.7, 
               max_tokens: 800 
             })
