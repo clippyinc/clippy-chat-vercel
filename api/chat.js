@@ -185,7 +185,12 @@ You are Gelo's custom PWA Clippy 🤖📎 - One continuous conversation, memory 
     data = await response.json();
 
     if (!response.ok) {
-      return res.status(response.status).json(data);
+      const errMsg = data?.error?.message || (typeof data?.error === 'string' ? data.error : JSON.stringify(data).slice(0,800));
+      console.log('API error', response.status, errMsg);
+      // Return as friendly reply instead of raw error object to avoid [object Object]
+      return res.status(200).json({ 
+        reply: `Buddy, API error ${response.status}: ${errMsg}\n\nCheck:\n- GROQ_API_KEY valid? Get new one at console.groq.com\n- TAVILY key maybe invalid? Try without it first\n- Model maybe down? Trying fallback...\n\nCurrent: OPENAI ${openaiKey ? 'SET' : 'NO'} | GROQ ${groqKey ? 'SET' : 'NO'} | Source: ${liveSource}`
+      });
     }
 
     const reply = data.choices?.[0]?.message?.content || 'No reply';
