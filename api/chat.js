@@ -8,67 +8,73 @@ export default async function handler(req, res) {
     const { messages } = req.body;
     if (!messages ||!Array.isArray(messages)) return res.status(400).json({ error: 'messages required' });
 
-    const groqKey = (process.env.GROQ_API_KEY || '').trim().replace(/['"]/g, '');
-    const openaiKey = (process.env.OPENAI_API_KEY || '').trim().replace(/['"]/g, '');
+    const groqKey = (process.env.GROQ_API_KEY || '').trim();
+    const openaiKey = (process.env.OPENAI_API_KEY || '').trim();
+    const supaUrl = (process.env.SUPABASE_URL || '').trim();
+    const supaKey = (process.env.SUPABASE_ANON_KEY || '').trim();
 
-    if (!groqKey &&!openaiKey) {
-      return res.status(200).json({ reply: 'No key! Add GROQ_API_KEY in Vercel' });
-    }
+    // REAL system prompt — helpful, not goodbye spam!
+    const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila", weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    const systemPrompt = `You are Clippy — Gelo's friendly AI OS from Marilao, PH. Date: ${now}.
+Be helpful, concise, funny, buddy tone. Answer the user's actual question.
+Only say "Good progress today buddy. Let's continue later." when the user says goodbye, goodnight, or wants to stop. NEVER spam it every message!
+If user says "how are you", reply normally like "I'm good bud! Back online!" not the goodbye line.`;
 
-    const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
-    const coreIdentity = `You are Clippy - Gelo's AI OS, Marilao PH, ${now}. Say "Good progress today buddy. Let's continue later." NEVER say tomorrow.`;
+    // Filter out the poisoned goodbye spam from history
+    const cleanHistory = messages.filter(m => {
+      if (m.role === 'assistant' && m.content.includes('Good progress today buddy. Let\'s continue later.')) {
+        // Keep only 1 goodbye, not 10 in a row
+        return false;
+      }
+      return m.role!== 'system';
+    }).slice(-20);
 
-    const finalMessages = [{ role: 'system', content: coreIdentity },...messages.filter(m=>m.role!=='system').slice(-20)];
+    const finalMessages = [{ role: 'system', content: systemPrompt },...cleanHistory];
 
     let response, data;
 
-    // Try Groq with ALL free models
+    // Try Groq first (free models)
     if (groqKey) {
-      const groqModels = [
-        'llama-3.1-8b-instant',
-        'gemma2-9b-it',
-        'openai/gpt-oss-20b',
-        'openai/gpt-oss-120b',
-        'llama-3.3-70b-versatile',
-        'mixtral-8x7b-32768'
-      ];
-
-      for (const model of groqModels) {
+      const models = ['llama-3.1-8b-instant', 'gemma2-9b-it', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile'];
+      for (const model of models) {
         try {
-          console.log(`Trying Groq ${model}`);
           response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
-            body: JSON.stringify({ model, messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
+            body: JSON.stringify({ model, messages: finalMessages, temperature: 0.7, max_tokens: 1000 })
           });
           data = await response.json();
           if (response.ok && data.choices?.[0]?.message?.content) {
-            console.log(`SUCCESS with ${model}`);
-            return res.status(200).json({ reply: data.choices[0].message.content });
+            break;
           }
-          console.log(`Failed ${model}: ${response.status} ${data?.error?.message?.slice(0,150)}`);
-        } catch(e) {
-          console.log(`Error ${model}: ${e.message}`);
-        }
+        } catch {}
       }
-      // If all Groq models failed
-      return res.status(200).json({
-        reply: `Groq key valid but all models failed! Last error: ${data?.error?.message || 'unknown'}\n\nFix: Go to console.groq.com → Verify email/phone → Create NEW key → Vercel → Update GROQ_API_KEY → Redeploy\n\nTry also adding OPENAI_API_KEY if you have one!`
-      });
+      if (response?.ok && data?.choices?.[0]?.message?.content) {
+        const reply = data.choices[0].message.content;
+        // Optional Supabase log — safe URL check
+        if (supaUrl && supaUrl.startsWith('https://') && supaKey && supaUrl.includes('supabase.co')) {
+          try {
+            const lastUser = [...messages].reverse().find(m => m.role === 'user');
+            if (lastUser) fetch(`${supaUrl}/rest/v1/messages`, { method: 'POST', headers: { 'Content-Type':'application/json','apikey':supaKey,'Authorization':`Bearer ${supaKey}`,'Prefer':'return=minimal' }, body: JSON.stringify({ content: lastUser.content, role: 'user' }) }).catch(()=>{});
+          } catch {}
+        }
+        return res.status(200).json({ reply });
+      }
     }
 
+    // Fallback OpenAI
     if (openaiKey) {
       response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
         body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.7, max_tokens: 1000 })
       });
       data = await response.json();
       if (response.ok) return res.status(200).json({ reply: data.choices?.[0]?.message?.content || 'No reply' });
-      return res.status(200).json({ reply: `OpenAI error: ${data?.error?.message}` });
     }
 
-    return res.status(200).json({ reply: 'No key!' });
+    return res.status(200).json({ reply: `Error: Groq key invalid or no model access. Last: ${data?.error?.message || 'no key'}` });
   } catch(e) {
-    return res.status(200).json({ reply: `Server error: ${e.message}` });
+    return res.status(200).json({ reply: `Error: ${e.message}` });
   }
 }
