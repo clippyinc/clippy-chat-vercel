@@ -1,105 +1,81 @@
--- Clippy OS Permanent Memory - Organized via Make
--- Enable pgvector for documents
-create extension if not exists vector;
+export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method!== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
--- 1. Memories (general knowledge)
-create table memories (
-  id uuid primary key default gen_random_uuid(),
-  content text not null,
-  type text default 'general',
-  business_id text,
-  source text default 'manual',
-  created_at timestamptz default now()
-);
+  try {
+    const { messages } = req.body;
+    if (!messages ||!Array.isArray(messages)) return res.status(400).json({ error: 'messages required' });
 
--- 2. Goals
-create table goals (
-  id uuid primary key default gen_random_uuid(),
-  title text not null,
-  status text default 'active',
-  business_id text,
-  created_at timestamptz default now()
-);
+    const groqKey = (process.env.GROQ_API_KEY || '').trim();
+    const openaiKey = (process.env.OPENAI_API_KEY || '').trim();
+    const tavilyKey = (process.env.TAVILY_API_KEY || '').trim();
+    const supabaseUrl = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
+    const supabaseKey = (process.env.SUPABASE_ANON_KEY || '').trim();
 
--- 3. Schedules (from Calendar via Make)
-create table schedules (
-  id uuid primary key default gen_random_uuid(),
-  title text not null,
-  start_time timestamptz,
-  end_time timestamptz,
-  source text default 'make',
-  created_at timestamptz default now()
-);
+    if (!groqKey &&!openaiKey) return res.status(200).json({ reply: 'No key! Add GROQ_API_KEY' });
 
--- 4. Tasks (from Gmail / Make)
-create table tasks (
-  id uuid primary key default gen_random_uuid(),
-  title text not null,
-  status text default 'pending',
-  priority text default 'medium',
-  business_id text,
-  source text default 'make',
-  created_at timestamptz default now()
-);
+    const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
+    let systemPrompt = `You are Clippy — Gelo's AI OS from Marilao, PH. Date: ${now}. Be helpful, concise, buddy tone.`;
 
--- 5. Financial Records (from Xero/Sheets via Make)
-create table financial_records (
-  id uuid primary key default gen_random_uuid(),
-  business_id text,
-  amount numeric,
-  type text,
-  description text,
-  source text default 'make',
-  created_at timestamptz default now()
-);
+    const cleanHistory = messages.filter(m => m.role!== 'system').slice(-20);
+    const lastUserQ = cleanHistory.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
 
--- 6. Business Data (Shopify, sales via Make)
-create table business_data (
-  id uuid primary key default gen_random_uuid(),
-  business_id text not null,
-  metric text not null,
-  value jsonb,
-  date date default current_date,
-  source text default 'make',
-  created_at timestamptz default now()
-);
+    let webContext = '';
+    const needsWeb = /news|price|weather|today|current|latest|search|who is|what is.*2025|2026|score|stock|nba/i.test(lastUserQ);
+    if (needsWeb && tavilyKey) {
+      try {
+        const sRes = await fetch('https://api.tavily.com/search', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: tavilyKey, query: lastUserQ, max_results: 5, search_depth: 'basic' })
+        });
+        const sData = await sRes.json();
+        if (sData.results?.length) webContext = `\n\nWEB: ${sData.results.map(r => r.content.slice(0,300)).join('\n')}`;
+      } catch {}
+    }
 
--- 7. Documents (from + button)
-create table documents (
-  id uuid primary key default gen_random_uuid(),
-  filename text,
-  content text,
-  business_id text,
-  source text default 'manual',
-  created_at timestamptz default now()
-);
+    const finalMessages = [{ role: 'system', content: systemPrompt + webContext },...cleanHistory];
+    let reply = null; let lastError = '';
 
--- 8. Notifications (Make → Clippy overlay)
-create table notifications (
-  id uuid primary key default gen_random_uuid(),
-  subject text not null,
-  message text not null,
-  business_id text,
-  priority text default 'medium',
-  read boolean default false,
-  created_at timestamptz default now()
-);
+    if (groqKey) {
+      for (const model of ['llama-3.1-8b-instant', 'gemma2-9b-it']) {
+        try {
+          const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
+            body: JSON.stringify({ model, messages: finalMessages, temperature: 0.7, max_tokens: 1000 })
+          });
+          const d = await r.json();
+          if (r.ok && d.choices?.[0]?.message?.content) { reply = d.choices[0].message.content; break; }
+          lastError = d?.error?.message;
+        } catch (e) { lastError = e.message; }
+      }
+    }
 
--- Enable RLS but allow anon (for now, we secure later)
-alter table memories enable row level security;
-alter table goals enable row level security;
-alter table schedules enable row level security;
-alter table tasks enable row level security;
-alter table financial_records enable row level security;
-alter table business_data enable row level security;
-alter table documents enable row level security;
-alter table notifications enable row level security;
+    if (!reply && openaiKey) {
+      const r = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+        body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.7, max_tokens: 1000 })
+      });
+      const d = await r.json(); reply = d.choices?.[0]?.message?.content;
+    }
 
-create policy "allow all for anon" on memories for all using (true) with check (true);
-create policy "allow all for anon" on goals for all using (true) with check (true);
-create policy "allow all for anon" on schedules for all using (true) with check (true);
-create policy "allow all for anon" on tasks for all using (true) with check (true);
-create policy "allow all for anon" on financial_records for all using (true) with check (true);
-create policy "allow all for anon" on business_data for all using (true) with check (true);
-create policy "allow all for anon" on documents for all using (true) with check (true);
-create policy "allow all for anon" on notifications for all using (true) with check (true);
+    if (!reply) return res.status(200).json({ reply: `Error: ${lastError}` });
+
+    // SAVE - correct columns only
+    if (supabaseUrl && supabaseKey) {
+      try {
+        await fetch(`${supabaseUrl}/rest/v1/memories`, {
+          method: 'POST',
+          headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ content: lastUserQ.slice(0,500), business_id: 'B1' })
+        });
+      } catch (e) { console.log(e.message); }
+    }
+
+    return res.status(200).json({ reply });
+  } catch (e) {
+    return res.status(200).json({ reply: `Server error: ${e.message}` });
+  }
+}
