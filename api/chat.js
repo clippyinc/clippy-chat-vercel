@@ -94,8 +94,8 @@ If user asks how are you, answer normally: "I'm good bud! Back online with web a
     if (!reply) {
       return res.status(200).json({ reply: `Error: No API key working. Groq: ${groqKey?'SET but all models failed: '+data?.error?.message:'NO'} OpenAI: ${openaiKey?'SET':'NO'} Tavily: ${tavilyKey?'SET':'NO'}` });
     }
-
-    // 3. Log to Supabase safely
-    if (isValidSupaUrl && supaKey) {
-      try {
-        const userMsg = [...cleanHi
+// Optional: Log to Supabase securely if env set — FIXED pattern error
+    const supaUrl = (process.env.SUPABASE_URL || '').trim();
+    const supaKey = (process.env.SUPABASE_ANON_KEY || '').trim();
+    const isValidSupaUrl = supaUrl.startsWith('https://') && supaUrl.includes('.supabase.co') && !supaUrl.includes('xxxxx');
+    if (isValidSupaUrl && supaKey && messages.length) {
