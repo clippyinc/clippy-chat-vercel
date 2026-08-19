@@ -1,81 +1,98 @@
-// memory.js - Importable Chat Memory Module v1.0
-// Works with any design - Clippy, Gelo AI, ICARE, etc.
-// Usage: <script src="memory.js"></script> then Memory.init()
-
+// memory.js - v2.0 SAFE - Only frontend, no chat.js needed
 const Memory = {
   key: 'clippy_chat_memory',
-  maxMessages: 100, // keep last 100 messages max to avoid storage limit
-  maxStorageSize: 4 * 1024 * 1024, // 4MB safety limit
+  longTermKey: 'clippy_long_term_memory',
+  maxMessages: 100,
+  maxStorageSize: 4 * 1024 * 1024,
 
-  // Load from localStorage
   load() {
     try {
       const raw = localStorage.getItem(this.key);
       if (!raw) return null;
       const data = JSON.parse(raw);
-      // Validate
       if (!Array.isArray(data) || data.length === 0) return null;
-      console.log(`[Memory] Loaded ${data.length} messages from localStorage`);
       return data;
-    } catch (e) {
-      console.warn('[Memory] Failed to load:', e);
-      return null;
-    }
+    } catch { return null; }
   },
 
-  // Save to localStorage (with size check)
+  loadLongTerm() {
+    try {
+      const raw = localStorage.getItem(this.longTermKey);
+      return raw? JSON.parse(raw) : {};
+    } catch { return {}; }
+  },
+
+  saveLongTerm(key, value) {
+    try {
+      const data = this.loadLongTerm();
+      data[key] = value;
+      data._updated = new Date().toISOString();
+      localStorage.setItem(this.longTermKey, JSON.stringify(data));
+      return data;
+    } catch(e) {}
+  },
+
+  extractPreferences(content) {
+    if (!content) return null;
+    const lower = content.toLowerCase();
+    const prefs = this.loadLongTerm();
+    let found = false;
+
+    // "use later instead of tomorrow" - YOUR FIX
+    if (lower.includes('use') && lower.includes('instead of')) {
+      const m = content.match(/use\s+(.+?)\s+instead of\s+(.+)/i);
+      if (m) {
+        const useWhat = m[1].trim().toLowerCase().replace(/buddy|please/g,'').trim();
+        const insteadWhat = m[2].trim().toLowerCase().replace(/buddy|please/g,'').trim();
+        prefs[`pref_${insteadWhat}`] = useWhat;
+        prefs['language_style'] = `Use "${useWhat}" instead of "${insteadWhat}"`;
+        prefs['later_not_tomorrow'] = true;
+        found = true;
+      }
+    }
+    if (lower.includes('tandaan mo') || lower.startsWith('remember')) {
+      const fact = content.replace(/remember|tandaan mo/gi,'').trim().slice(0,200);
+      if (fact.length > 5) { prefs[`fact_${Date.now()}`] = fact; found = true; }
+    }
+    if (lower.includes('my shift') || lower.includes('duty ko')) {
+      prefs['last_schedule'] = content.slice(0,200);
+      found = true;
+    }
+    if (found) localStorage.setItem(this.longTermKey, JSON.stringify(prefs));
+    return found? prefs : null;
+  },
+
   save(messages) {
     try {
-      // Keep only recent messages + strip large file URLs to save space
-      const toSave = messages.slice(-this.maxMessages).map(m => ({
-        role: m.role,
-        content: m.content,
-        id: m.id,
-        // Save file metadata but not blob URLs (they expire)
-        files: (m.files || []).map(f => ({
-          name: f.name,
-          size: f.size,
-          ext: f.ext,
-          textContent: (f.textContent || '').slice(0, 2000) // trim file content
-        }))
+      const lastUser = [...messages].reverse().find(m => m.role === 'user');
+      if (lastUser) this.extractPreferences(lastUser.content);
+      const toSave = messages.slice(-100).map(m => ({
+        role: m.role, content: m.content, id: m.id,
+        files: (m.files||[]).map(f=>({name:f.name,size:f.size,ext:f.ext,textContent:(f.textContent||'').slice(0,2000)}))
       }));
-      
-      const json = JSON.stringify(toSave);
-      if (json.length > this.maxStorageSize) {
-        console.warn('[Memory] Too large, trimming...');
-        // Trim more aggressively
-        const trimmed = toSave.slice(-20);
-        localStorage.setItem(this.key, JSON.stringify(trimmed));
-      } else {
-        localStorage.setItem(this.key, json);
-      }
-      console.log(`[Memory] Saved ${toSave.length} messages`);
-    } catch (e) {
-      // Quota exceeded - clear and save last 10
-      console.warn('[Memory] Quota exceeded, clearing:', e);
+      localStorage.setItem(this.key, JSON.stringify(toSave));
+    } catch {
       try {
-        localStorage.removeItem(this.key);
-        const last = messages.slice(-10).map(m => ({ role: m.role, content: m.content, id: m.id, files: [] }));
-        localStorage.setItem(this.key, JSON.stringify(last));
+        localStorage.setItem(this.key, JSON.stringify(messages.slice(-10).map(m=>({role:m.role,content:m.content,id:m.id,files:[]}))));
       } catch {}
     }
   },
 
-  // Clear memory
   clear() {
     localStorage.removeItem(this.key);
-    console.log('[Memory] Cleared');
+    console.log('[Memory v2] Cleared chat only, long-term kept');
   },
 
-  // Init - returns saved messages or null
+  clearAll() {
+    localStorage.removeItem(this.key);
+    localStorage.removeItem(this.longTermKey);
+  },
+
   init(defaultMessages) {
     const saved = this.load();
-    if (saved && saved.length > 1) {
-      return saved;
-    }
+    const lt = this.loadLongTerm();
+    if (lt.later_not_tomorrow) console.log('[Memory v2] Using later not tomorrow ✅');
+    if (saved && saved.length > 1) return saved;
     return defaultMessages;
   }
 };
-
-// Auto-export for module systems
-if (typeof module !== 'undefined') module.exports = Memory;
