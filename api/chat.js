@@ -12,6 +12,8 @@ export default async function handler(req, res) {
     const groqKey = (process.env.GROQ_API_KEY || '').trim();
     const openaiKey = (process.env.OPENAI_API_KEY || '').trim();
     const tavilyKey = (process.env.TAVILY_API_KEY || '').trim();
+    const supabaseUrl = (process.env.SUPABASE_URL || '').trim();
+    const supabaseKey = (process.env.SUPABASE_ANON_KEY || '').trim();
 
     if (!groqKey &&!openaiKey) {
       return res.status(200).json({ reply: 'No key! Add GROQ_API_KEY' });
@@ -86,9 +88,23 @@ Only say "Good progress today buddy. Let's continue later." when user says bye/g
     }
 
     if (!reply) return res.status(200).json({ reply: `Error: ${lastError}` });
-    return res.status(200).json({ reply });
 
-  } catch (e) {
-    return res.status(200).json({ reply: `Server error: ${e.message}` });
-  }
-}
+    // --- SUPABASE SAVE (new, surgical) ---
+    if (supabaseUrl && supabaseKey) {
+      try {
+        // save chat to messages table (if exists) + memories table
+        const payload = {
+          title: lastUserQ.slice(0,200),
+          content: lastUserQ,
+          created_at: new Date().toISOString()
+        };
+        // try memories
+        await fetch(`${supabaseUrl}/rest/v1/memories`, {
+          method: 'POST',
+          headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ content: `Q: ${lastUserQ}\nA: ${reply.slice(0,500)}`, business_id: null })
+        });
+        // try messages if table exists
+        await fetch(`${supabaseUrl}/rest/v1/messages`, {
+          method: 'POST',
+          headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/js
