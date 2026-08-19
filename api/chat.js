@@ -1,15 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
 
 export default async function handler(req, res) {
+  // Explicitly force JSON headers
+  res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { messages, userId } = req.body;
-    if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'messages required' });
+    const { messages, userId } = req.body || {};
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ reply: 'Error: messages array required.' });
+    }
 
     const groqKey = (process.env.GROQ_API_KEY || '').trim();
     const openaiKey = (process.env.OPENAI_API_KEY || '').trim();
@@ -21,18 +26,25 @@ export default async function handler(req, res) {
       return res.status(200).json({ reply: 'No key! Add GROQ_API_KEY' });
     }
 
-    // Initialize Supabase Client
-    const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+    // Initialize Supabase safely
+    let supabase = null;
+    if (supabaseUrl && supabaseKey) {
+      try {
+        supabase = createClient(supabaseUrl, supabaseKey);
+      } catch (err) {
+        console.error('Supabase init fail:', err.message);
+      }
+    }
 
     const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
-    let systemPrompt = `You are Clippy — Gelo's AI OS from Marilao, PH. Date: ${now}.
+    const systemPrompt = `You are Clippy — Gelo's AI OS from Marilao, PH. Date: ${now}.
 Be helpful, concise, buddy tone. You have web search access when needed.
 Only say "Good progress today buddy. Let's continue later." when user says bye/goodnight.`;
 
     const cleanHistory = messages.filter(m => m.role !== 'system').slice(-20);
     const lastUserQ = cleanHistory.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
 
-    // --- WEB SEARCH (only when needed) ---
+    // --- WEB SEARCH ---
     let webContext = '';
     const needsWeb = /news|price|weather|today|current|latest|search|who is|what is.*2025|2026|score|stock|nba|weather in/i.test(lastUserQ);
 
@@ -53,7 +65,7 @@ Only say "Good progress today buddy. Let's continue later." when user says bye/g
         if (sData.results?.length) {
           webContext = `\n\nWEB SEARCH RESULTS for "${lastUserQ}":\n${sData.results.map(r => `- ${r.title}: ${r.content.slice(0,350)} [${r.url}]`).join('\n')}\nAnswer using these results, cite sources!`;
         }
-      } catch (e) { console.log('Tavily fail', e.message); }
+      } catch (e) { console.error('Tavily fail:', e.message); }
     }
 
     const finalMessages = [{ role: 'system', content: systemPrompt + webContext }, ...cleanHistory];
@@ -92,27 +104,30 @@ Only say "Good progress today buddy. Let's continue later." when user says bye/g
       } catch (e) { lastError = e.message; }
     }
 
-    if (!reply) return res.status(200).json({ reply: `Error: ${lastError}` });
+    if (!reply) return res.status(200).json({ reply: `Error: ${lastError || 'No response generated.'}` });
 
-    // --- SUPABASE PERSISTENCE ---
+    // --- SUPABASE LOGGING ---
     if (supabase) {
       try {
-        await supabase.from('chat_history').insert([
+        await supabase.from('chat_logs').insert([
           {
             user_id: userId || 'anonymous',
-            user_prompt: lastUserQ,
-            ai_response: reply,
+            user_message: lastUserQ,
+            bot_reply: reply,
             created_at: new Date().toISOString()
           }
         ]);
       } catch (dbErr) {
-        console.log('Supabase insertion error:', dbErr.message);
+        console.error('Supabase write fail:', dbErr.message);
       }
     }
 
     return res.status(200).json({ reply });
 
   } catch (e) {
-    return res.status(200).json({ reply: `Server error: ${e.message}` });
+    console.error('Unhandled top-level error:', e);
+    // Guarantee JSON structure on server crash
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(500).json({ reply: `Server error: ${e.message}` });
   }
 }
