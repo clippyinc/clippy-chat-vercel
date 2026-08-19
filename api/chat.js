@@ -12,59 +12,39 @@ export default async function handler(req, res) {
     const groqKey = (process.env.GROQ_API_KEY || '').trim();
     const openaiKey = (process.env.OPENAI_API_KEY || '').trim();
     const tavilyKey = (process.env.TAVILY_API_KEY || '').trim();
-    const supabaseUrl = (process.env.SUPABASE_URL || '').trim();
+    const supabaseUrl = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
     const supabaseKey = (process.env.SUPABASE_ANON_KEY || '').trim();
 
-    if (!groqKey &&!openaiKey) {
-      return res.status(200).json({ reply: 'No key! Add GROQ_API_KEY' });
-    }
+    if (!groqKey &&!openaiKey) return res.status(200).json({ reply: 'No key! Add GROQ_API_KEY' });
 
     const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
-    let systemPrompt = `You are Clippy — Gelo's AI OS from Marilao, PH. Date: ${now}.
-Be helpful, concise, buddy tone. You have web search access when needed.
-Only say "Good progress today buddy. Let's continue later." when user says bye/goodnight.`;
+    let systemPrompt = `You are Clippy — Gelo's AI OS from Marilao, PH. Date: ${now}. Be helpful, concise, buddy tone.`;
 
     const cleanHistory = messages.filter(m => m.role!== 'system').slice(-20);
     const lastUserQ = cleanHistory.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
 
-    // --- WEB SEARCH (only when needed) ---
     let webContext = '';
-    const needsWeb = /news|price|weather|today|current|latest|search|who is|what is.*2025|2026|score|stock|nba|weather in/i.test(lastUserQ);
-
+    const needsWeb = /news|price|weather|today|current|latest|search|who is|what is.*2025|2026|score|stock|nba/i.test(lastUserQ);
     if (needsWeb && tavilyKey) {
       try {
         const sRes = await fetch('https://api.tavily.com/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            api_key: tavilyKey,
-            query: lastUserQ,
-            max_results: 5,
-            search_depth: 'basic',
-            include_answer: true
-          })
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: tavilyKey, query: lastUserQ, max_results: 5, search_depth: 'basic' })
         });
         const sData = await sRes.json();
-        if (sData.results?.length) {
-          webContext = `\n\nWEB SEARCH RESULTS for "${lastUserQ}":\n${sData.results.map(r => `- ${r.title}: ${r.content.slice(0,350)} [${r.url}]`).join('\n')}\nAnswer using these results, cite sources!`;
-        }
-      } catch (e) { console.log('Tavily fail', e.message); }
+        if (sData.results?.length) webContext = `\n\nWEB: ${sData.results.map(r => r.content.slice(0,300)).join('\n')}`;
+      } catch {}
     }
 
     const finalMessages = [{ role: 'system', content: systemPrompt + webContext },...cleanHistory];
+    let reply = null; let lastError = '';
 
-    let reply = null;
-    let lastError = '';
-
-    // 1. Groq
     if (groqKey) {
-      const models = ['llama-3.1-8b-instant', 'gemma2-9b-it', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile'];
-      for (const model of models) {
+      for (const model of ['llama-3.1-8b-instant', 'gemma2-9b-it']) {
         try {
           const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
-            body: JSON.stringify({ model, messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
+            body: JSON.stringify({ model, messages: finalMessages, temperature: 0.7, max_tokens: 1000 })
           });
           const d = await r.json();
           if (r.ok && d.choices?.[0]?.message?.content) { reply = d.choices[0].message.content; break; }
@@ -73,38 +53,29 @@ Only say "Good progress today buddy. Let's continue later." when user says bye/g
       }
     }
 
-    // 2. OpenAI fallback
     if (!reply && openaiKey) {
-      try {
-        const r = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-          body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
-        });
-        const d = await r.json();
-        if (r.ok) reply = d.choices?.[0]?.message?.content;
-        else lastError = d?.error?.message;
-      } catch (e) { lastError = e.message; }
+      const r = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+        body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.7, max_tokens: 1000 })
+      });
+      const d = await r.json(); reply = d.choices?.[0]?.message?.content;
     }
 
     if (!reply) return res.status(200).json({ reply: `Error: ${lastError}` });
 
-    // --- SUPABASE SAVE (new, surgical) ---
+    // SAVE - correct columns only
     if (supabaseUrl && supabaseKey) {
       try {
-        // save chat to messages table (if exists) + memories table
-        const payload = {
-          title: lastUserQ.slice(0,200),
-          content: lastUserQ,
-          created_at: new Date().toISOString()
-        };
-        // try memories
         await fetch(`${supabaseUrl}/rest/v1/memories`, {
           method: 'POST',
           headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-          body: JSON.stringify({ content: `Q: ${lastUserQ}\nA: ${reply.slice(0,500)}`, business_id: null })
+          body: JSON.stringify({ content: lastUserQ.slice(0,500), business_id: 'B1' })
         });
-        // try messages if table exists
-        await fetch(`${supabaseUrl}/rest/v1/messages`, {
-          method: 'POST',
-          headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/js
+      } catch (e) { console.log(e.message); }
+    }
+
+    return res.status(200).json({ reply });
+  } catch (e) {
+    return res.status(200).json({ reply: `Server error: ${e.message}` });
+  }
+}
