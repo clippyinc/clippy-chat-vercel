@@ -8,11 +8,11 @@ export default async function handler(req, res) {
     const { messages } = req.body;
     if (!messages ||!Array.isArray(messages)) return res.status(400).json({ error: 'messages required' });
 
-    const openaiKey = process.env.OPENAI_API_KEY;
-    const groqKey = process.env.GROQ_API_KEY;
+    const groqKey = (process.env.GROQ_API_KEY || '').trim().replace(/['"]/g, '');
+    const openaiKey = (process.env.OPENAI_API_KEY || '').trim().replace(/['"]/g, '');
 
-    if (!openaiKey &&!groqKey) {
-      return res.status(200).json({ reply: `No key! OpenAI ${openaiKey?'SET':'NO'} Groq ${groqKey?'SET':'NO'}\n\nGo to Vercel → Settings → Env Vars → Add GROQ_API_KEY = gsk_... (Production checked) → Redeploy` });
+    if (!groqKey &&!openaiKey) {
+      return res.status(200).json({ reply: 'No key! Add GROQ_API_KEY in Vercel' });
     }
 
     const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
@@ -22,14 +22,39 @@ export default async function handler(req, res) {
 
     let response, data;
 
+    // Try Groq with ALL free models
     if (groqKey) {
-      response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
-        body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
+      const groqModels = [
+        'llama-3.1-8b-instant',
+        'gemma2-9b-it',
+        'openai/gpt-oss-20b',
+        'openai/gpt-oss-120b',
+        'llama-3.3-70b-versatile',
+        'mixtral-8x7b-32768'
+      ];
+
+      for (const model of groqModels) {
+        try {
+          console.log(`Trying Groq ${model}`);
+          response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
+            body: JSON.stringify({ model, messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
+          });
+          data = await response.json();
+          if (response.ok && data.choices?.[0]?.message?.content) {
+            console.log(`SUCCESS with ${model}`);
+            return res.status(200).json({ reply: data.choices[0].message.content });
+          }
+          console.log(`Failed ${model}: ${response.status} ${data?.error?.message?.slice(0,150)}`);
+        } catch(e) {
+          console.log(`Error ${model}: ${e.message}`);
+        }
+      }
+      // If all Groq models failed
+      return res.status(200).json({
+        reply: `Groq key valid but all models failed! Last error: ${data?.error?.message || 'unknown'}\n\nFix: Go to console.groq.com → Verify email/phone → Create NEW key → Vercel → Update GROQ_API_KEY → Redeploy\n\nTry also adding OPENAI_API_KEY if you have one!`
       });
-      data = await response.json();
-      if (response.ok) return res.status(200).json({ reply: data.choices?.[0]?.message?.content || 'No reply' });
-      return res.status(200).json({ reply: `Groq error ${response.status}: ${data?.error?.message || 'Key invalid?'}` });
     }
 
     if (openaiKey) {
@@ -39,10 +64,11 @@ export default async function handler(req, res) {
       });
       data = await response.json();
       if (response.ok) return res.status(200).json({ reply: data.choices?.[0]?.message?.content || 'No reply' });
+      return res.status(200).json({ reply: `OpenAI error: ${data?.error?.message}` });
     }
 
     return res.status(200).json({ reply: 'No key!' });
   } catch(e) {
-    return res.status(200).json({ reply: `Error: ${e.message}` });
+    return res.status(200).json({ reply: `Server error: ${e.message}` });
   }
 }
