@@ -23,12 +23,19 @@ export default async function handler(req, res) {
       }
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    // Support both OpenAI and Groq keys - fallback system
+    const openaiKey = process.env.OPENAI_API_KEY;
+    const groqKey = process.env.GROQ_API_KEY;
+    const apiKey = openaiKey || groqKey;
+    
     if (!apiKey) {
-      return res.status(500).json({ error: 'OPENAI_API_KEY not set in Vercel env' });
+      return res.status(200).json({ 
+        reply: `Buddy, Vercel env error! 🤖\n\nOPENAI_API_KEY not set!\n\nFix:\n1. Go vercel.com → your project → Settings → Environment Variables\n2. Add OPENAI_API_KEY = sk-proj-... (from platform.openai.com)\n3. Or add GROQ_API_KEY = gsk_... (from console.groq.com - FREE!)\n4. Redeploy!\n\nCurrent env check:\n- OPENAI: ${openaiKey ? 'SET ✅' : 'NOT SET ❌'}\n- GROQ: ${groqKey ? 'SET ✅' : 'NOT SET ❌'}\n- TAVILY: ${process.env.TAVILY_API_KEY ? 'SET ✅' : 'NOT SET (optional)'}\n\nTell me when done and I'll work!` 
+      });
     }
 
     const tavilyKey = process.env.TAVILY_API_KEY;
+    const useGroq = !openaiKey && groqKey;
     const now = new Date().toLocaleString("en-PH", { 
       timeZone: "Asia/Manila",
       weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -142,21 +149,40 @@ You are Gelo's custom PWA Clippy 🤖📎 - One continuous conversation, memory 
       ...historyWithoutSystem
     ];
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: finalMessages,
-        temperature: 0.7,
-        max_tokens: 1500
-      })
-    });
+    let response, data;
+    if (useGroq) {
+      // Use Groq API (FREE)
+      response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${groqKey}`
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: finalMessages,
+          temperature: 0.7,
+          max_tokens: 1500
+        })
+      });
+    } else {
+      // Use OpenAI
+      response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: finalMessages,
+          temperature: 0.7,
+          max_tokens: 1500
+        })
+      });
+    }
 
-    const data = await response.json();
+    data = await response.json();
 
     if (!response.ok) {
       return res.status(response.status).json(data);
