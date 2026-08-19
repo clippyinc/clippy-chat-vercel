@@ -151,20 +151,50 @@ You are Gelo's custom PWA Clippy 🤖📎 - One continuous conversation, memory 
 
     let response, data;
     if (useGroq) {
-      // Use Groq API (FREE)
-      response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${groqKey}`
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: finalMessages,
-          temperature: 0.7,
-          max_tokens: 1500
-        })
-      });
+      // Use Groq API (FREE) - try multiple models with fallback
+      const groqModels = [
+        'openai/gpt-oss-20b',
+        'openai/gpt-oss-120b',
+        'llama-3.1-8b-instant',
+        'llama-3.1-70b-versatile',
+        'mixtral-8x7b-32768',
+        'gemma2-9b-it'
+      ];
+      let lastErr = '';
+      for (const m of groqModels) {
+        try {
+          console.log(`Trying Groq model: ${m}`);
+          response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${groqKey}`
+            },
+            body: JSON.stringify({
+              model: m,
+              messages: finalMessages,
+              temperature: 0.7,
+              max_tokens: 1500
+            })
+          });
+          data = await response.json();
+          if (response.ok && data.choices?.[0]?.message?.content) {
+            console.log(`Groq success with ${m}`);
+            break;
+          } else {
+            lastErr = data?.error?.message || JSON.stringify(data).slice(0,300);
+            console.log(`Groq model ${m} failed: ${lastErr}`);
+            // If 404, try next model
+            if (response.status === 404) continue;
+            // If other error, break and show error
+            if (response.status !== 404) break;
+          }
+        } catch(e) {
+          lastErr = e.message;
+          continue;
+        }
+      }
+      // If all models failed, data will contain last error
     } else {
       // Use OpenAI
       response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -180,9 +210,8 @@ You are Gelo's custom PWA Clippy 🤖📎 - One continuous conversation, memory 
           max_tokens: 1500
         })
       });
+      data = await response.json();
     }
-
-    data = await response.json();
 
     if (!response.ok) {
       const errMsg = data?.error?.message || (typeof data?.error === 'string' ? data.error : JSON.stringify(data).slice(0,800));
