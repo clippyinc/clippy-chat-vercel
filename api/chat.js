@@ -29,70 +29,58 @@ export default async function handler(req, res) {
         return out.slice(0,3500);
       } catch { return ''; }
     }
+    function needsLive(m) {
+      if (!m) return false; const l=m.toLowerCase(); return ['today','now','current','latest','news','weather','lakers','nba','price','score','game','tomorrow','tonight','mayor','marilao','bulacan','crypto'].some(t=>l.includes(t));
+    }
+    let liveWebData='', liveSource='none';
+    if (needsLive(userQuery) && tavilyKey) { liveWebData = await searchTavily(userQuery); liveSource='tavily'; }
 
     const coreIdentity = `
-CLIPPY CORE IDENTITY
-Name: Clippy - Gelo's Personal AI OS, Marilao PH
-User: Gelo Cabornay, Bonchon SM Valenzuela, Goal: Financial Freedom
+CLIPPY CORE IDENTITY - REMEMBER THIS FOREVER
+Name: Clippy - Gelo's Personal AI OS
+Location: Marilao, PH. User: Gelo Cabornay, Bonchon SM Valenzuela. Goal: Financial Freedom
 Time: ${now}
-Personality: Friendly, buddy, Taglish
+Personality: Friendly, uses buddy, Taglish
 Communication: Say "Good progress today buddy. Let's continue later." NEVER "tomorrow"!
-You have live web via ${tavilyKey?'Tavily':'DuckDuckGo'}.
-Live Data: ${userQuery.toLowerCase().match(/mayor|today|news/)? await searchTavily(userQuery) : 'no search needed'}
-You are Clippy with memory!
+Live: ${liveSource} ${liveWebData||'no search needed'}
+You are Clippy.
 `;
 
     const finalMessages = [{ role: 'system', content: coreIdentity },...messages.filter(m=>m.role!=='system').slice(-20)];
 
     let response, data;
     if (useGroq) {
-      // ONLY WORKING MODELS AS OF JUNE 2026!
       const groqModels = [
-        'llama-3.1-8b-instant', // MOST STABLE ✅
-        'llama-3.3-70b-versatile', // NEW replacement for 3.1-70b ✅
-        'openai/gpt-oss-20b', // Your old working model ✅
+        'llama-3.1-8b-instant',
+        'llama-3.3-70b-versatile',
+        'openai/gpt-oss-20b',
         'openai/gpt-oss-120b',
-        'gemma2-9b-it',
-        'mixtral-8x7b-32768'
+        'gemma2-9b-it'
       ];
       for (const m of groqModels) {
         try {
-          response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
-            body: JSON.stringify({ model: m, messages: finalMessages, temperature: 0.7, max_tokens: 1500, tool_choice: 'none' })
-          });
+          response = await fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` }, body: JSON.stringify({ model: m, messages: finalMessages, temperature: 0.7, max_tokens: 1500, tool_choice: 'none' }) });
           data = await response.json();
           if (response.ok && data.choices?.[0]?.message?.content) break;
           if (response.status===404||response.status===400) continue; else break;
         } catch { continue; }
       }
     } else {
-      response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-        body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.7, max_tokens: 1500 })
-      });
+      response = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` }, body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.7, max_tokens: 1500 }) });
       data = await response.json();
     }
-
-    if (!response.ok) {
-      const err = data?.error?.message || JSON.stringify(data).slice(0,500);
-      return res.status(200).json({ reply: `Buddy API error ${response.status}: ${err}` });
-    }
-
+    if (!response.ok) return res.status(200).json({ reply: `API error ${response.status}: ${data?.error?.message||JSON.stringify(data).slice(0,200)}` });
     const reply = data.choices?.[0]?.message?.content || 'No reply';
 
-    // SUPABASE - supports all 8 keys from your screenshot
-    let finalUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-    let finalKey = process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABAS__OLE_KEY;
-    if (!finalUrl) {
-      for (const [k,v] of Object.entries(process.env)) {
-        if (k.toLowerCase().includes('supabase') && k.toLowerCase().includes('url') && v?.includes('supabase.co')) { finalUrl=v; break; }
-      }
-    }
-    if (!finalKey) {
-      for (const [k,v] of Object.entries(process.env)) {
-        if (k.toLowerCase().includes('supabase') && v?.startsWith('eyJ')) { finalKey=v; break; }
-      }
-    }
-    if (finalUrl && finalKey) {
+    // SUPABASE - only needs SUPABASE_URL + SUPABASE_ANON_KEY now (you deleted NEXT_PUBLIC, good!)
+    const supaUrl = process.env.SUPABASE_URL;
+    const supaKey = process.env.SUPABASE_ANON_KEY;
+    if (supaUrl && supaKey && supaUrl.includes('supabase.co') && supaKey.startsWith('eyJ')) {
+      try {
+        const supaRes = await fetch(`${supaUrl}/rest/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': supaKey, 'Authorization': `Bearer ${supaKey}`, 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ content: lastUserMsg.content, role: 'user' })
+        });
+        console.log(`Supabase save: ${supaRes.status}`);
+      } ca
