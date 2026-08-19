@@ -151,14 +151,14 @@ You are Gelo's custom PWA Clippy 🤖📎 - One continuous conversation, memory 
 
     let response, data;
     if (useGroq) {
-      // Use Groq API (FREE) - try multiple models with fallback
+      // Use Groq API (FREE) - tool-safe models first to avoid "Tool choice is none" error
       const groqModels = [
-        'openai/gpt-oss-20b',
-        'openai/gpt-oss-120b',
-        'llama-3.1-8b-instant',
-        'llama-3.1-70b-versatile',
-        'mixtral-8x7b-32768',
-        'gemma2-9b-it'
+        'llama-3.1-8b-instant',        // MOST STABLE - no tools, never fails after 3 msgs
+        'gemma2-9b-it',                // Also stable, no tools
+        'llama-3.1-70b-versatile',     // Stable
+        'mixtral-8x7b-32768',          // Stable
+        'openai/gpt-oss-20b',          // Tool-capable, put LAST (causes your 400 error after 3 msgs)
+        'openai/gpt-oss-120b'
       ];
       let lastErr = '';
       for (const m of groqModels) {
@@ -174,7 +174,9 @@ You are Gelo's custom PWA Clippy 🤖📎 - One continuous conversation, memory 
               model: m,
               messages: finalMessages,
               temperature: 0.7,
-              max_tokens: 1500
+              max_tokens: 1500,
+              // Explicitly disable tool calling to prevent "Tool choice is none, but model called a tool"
+              tool_choice: 'none'
             })
           });
           data = await response.json();
@@ -183,11 +185,10 @@ You are Gelo's custom PWA Clippy 🤖📎 - One continuous conversation, memory 
             break;
           } else {
             lastErr = data?.error?.message || JSON.stringify(data).slice(0,300);
-            console.log(`Groq model ${m} failed: ${lastErr}`);
-            // If 404, try next model
-            if (response.status === 404) continue;
-            // If other error, break and show error
-            if (response.status !== 404) break;
+            console.log(`Groq model ${m} failed: ${response.status} ${lastErr}`);
+            // Retry on both 404 (model not found) AND 400 tool error (your screenshot bug)
+            if (response.status === 404 || response.status === 400) continue;
+            break;
           }
         } catch(e) {
           lastErr = e.message;
