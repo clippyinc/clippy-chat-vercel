@@ -11,6 +11,10 @@ export default async function handler(req, res) {
     const openaiKey = process.env.OPENAI_API_KEY;
     const groqKey = process.env.GROQ_API_KEY;
 
+    if (!openaiKey &&!groqKey) {
+      return res.status(200).json({ reply: `No key! OpenAI ${openaiKey?'SET':'NO'} Groq ${groqKey?'SET':'NO'}\n\nGo to Vercel → Settings → Env Vars → Add GROQ_API_KEY = gsk_... (Production checked) → Redeploy` });
+    }
+
     const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
     const coreIdentity = `You are Clippy - Gelo's AI OS, Marilao PH, ${now}. Say "Good progress today buddy. Let's continue later." NEVER say tomorrow.`;
 
@@ -18,25 +22,26 @@ export default async function handler(req, res) {
 
     let response, data;
 
-    if (openaiKey) {
-      response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-        body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
-      });
-      data = await response.json();
-      if (response.ok) return res.status(200).json({ reply: data.choices[0].message.content });
-    }
-
     if (groqKey) {
       response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
         body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
       });
       data = await response.json();
-      if (response.ok) return res.status(200).json({ reply: data.choices[0].message.content });
+      if (response.ok) return res.status(200).json({ reply: data.choices?.[0]?.message?.content || 'No reply' });
+      return res.status(200).json({ reply: `Groq error ${response.status}: ${data?.error?.message || 'Key invalid?'}` });
     }
 
-    return res.status(200).json({ reply: `No key! OpenAI ${openaiKey?'SET':'NO'} Groq ${groqKey?'SET':'NO'}` });
+    if (openaiKey) {
+      response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+        body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.7, max_tokens: 1000 })
+      });
+      data = await response.json();
+      if (response.ok) return res.status(200).json({ reply: data.choices?.[0]?.message?.content || 'No reply' });
+    }
+
+    return res.status(200).json({ reply: 'No key!' });
   } catch(e) {
     return res.status(200).json({ reply: `Error: ${e.message}` });
   }
