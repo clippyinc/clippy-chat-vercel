@@ -1,216 +1,131 @@
-<!DOCTYPE html>
-<html lang="en">
-<head><style>
-@font-face {
-  font-family: "Optimistic";
-  font-style: normal;
-  font-weight: 400 600;
-  font-display: swap;
-  src: url("/fonts/OptimisticAI_VF_Optimized.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Optimistic Mono";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/OptimisticMono_W_TextRegular.woff2") format("woff2");
-}
-:where(html) {
-  font-family: "Optimistic", system-ui, sans-serif;
-}
-:where(code, pre, kbd, samp) {
-  font-family: "Optimistic Mono", ui-monospace, monospace;
-}
-</style>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clippy</title>
-<link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#0a0a0a">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Clippy">
-<link rel="apple-touch-icon" href="/icon-192.png">
-<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
-<link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:Inter,system-ui,-apple-system,sans-serif;background:#0a0a0a;color:#ececec;height:100vh;display:flex;flex-direction:column}
-header{position:fixed;top:0;left:0;right:0;height:56px;background:#0a0a0a;border-bottom:1px solid #212121;display:flex;align-items:center;justify-content:center;z-index:20}
-header span{font-weight:800;font-size:18px;letter-spacing:2px;font-family:monospace}
-#chat{flex:1;overflow-y:auto;padding:72px 0 140px}
-.inner{max-width:760px;margin:0 auto;padding:0 16px;display:flex;flex-direction:column;gap:24px}
-.bubble{max-width:85%;border-radius:18px;padding:12px 16px;font-size:15px;line-height:1.6;white-space:pre-wrap;word-break:break-word;border:1px solid #212121;background:#171717;color:#ececec}
-.user{align-self:flex-end;background:#2f2f2f;border-color:#3a3a3a;color:#fff}
-.assistant{align-self:flex-start;background:#171717;color:#ececec}
-.files{display:flex;flex-wrap:wrap;gap:8px;max-width:85%}
-.file{display:flex;align-items:center;gap:8px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:8px 12px;text-decoration:none}
-.file .ext{font-size:11px;background:#212121;padding:3px 6px;border-radius:6px;color:#8e8e8e;font-weight:600}
-.file .name{font-size:13px;color:#ececec;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.file .size{font-size:11px;color:#6e6e6e}
-#bottom{position:fixed;bottom:0;left:0;right:0;background:#0a0a0a;border-top:1px solid #171717;padding:12px 0 16px;z-index:20}
-.bottom-inner{max-width:760px;margin:0 auto;padding:0 16px}
-.attach-preview{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-.attach-card{display:flex;align-items:center;gap:8px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:8px 12px}
-.input-wrap{display:flex;align-items:flex-end;gap:10px;background:#212121;border:1px solid #2a2a2a;border-radius:28px;padding:8px 10px}
-.icon-btn{width:36px;height:36px;border-radius:50%;background:#1a1a1a;border:1px solid #2a2a2a;color:#ececec;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
-#msg{flex:1;background:transparent;border:0;color:white;outline:none;resize:none;min-height:24px;max-height:120px;padding:8px 4px;font-size:15px;line-height:1.5}
-#send{width:36px;height:36px;border-radius:50%;border:0;background:#3a3a3a;color:#8e8e8e;cursor:default;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;flex-shrink:0}
-#send.active{background:white;color:black;cursor:pointer}
-pre.code{margin-top:10px;background:#0a0a0a;border:1px solid #212121;border-radius:10px;padding:10px;font-size:13px;font-family:monospace;max-height:200px;overflow-y:auto;white-space:pre-wrap}
-#clearMemory{position:absolute;right:16px;background:transparent;border:0;color:#333;font-size:10px;cursor:pointer;opacity:0.3}
-#clearMemory:hover{opacity:0.8;color:#666}
-</style>
-<script src="memory.js"></script>
-</head>
-<body>
-<header><span>CLIPPY</span><button id="clearMemory">•</button></header>
-<div id="chat"><div class="inner" id="list"></div></div>
-<div id="bottom">
-  <div class="bottom-inner">
-    <div class="attach-preview" id="attachPreview"></div>
-    <div class="input-wrap">
-      <input type="file" id="fileInput" multiple style="display:none">
-      <button class="icon-btn" id="attachBtn">+</button>
-      <textarea id="msg" placeholder="" rows="1"></textarea>
-      <button id="send">↑</button>
-    </div>
-  </div>
-</div>
-<script>
-const list = document.getElementById('list');
-const chat = document.getElementById('chat');
-const input = document.getElementById('msg');
-const sendBtn = document.getElementById('send');
-const fileInput = document.getElementById('fileInput');
-const attachBtn = document.getElementById('attachBtn');
-const attachPreview = document.getElementById('attachPreview');
-let defaultMessages = [];
-let messages = (typeof Memory !== 'undefined' ? Memory.init(defaultMessages) : defaultMessages);
-let attachments = [];
-function formatSize(b){ if(b<1024) return b+' B'; if(b<1024*1024) return (b/1024).toFixed(1)+' KB'; return (b/1024/1024).toFixed(1)+' MB'; }
-function render(){
-  list.innerHTML='';
-  messages.forEach(m=>{
-    if(!m.content && (!m.files || !m.files.length)) return;
-    const wrap = document.createElement('div');
-    wrap.style.display='flex'; wrap.style.flexDirection='column'; wrap.style.gap='8px';
-    wrap.style.alignItems = m.role==='user'?'flex-end':'flex-start';
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble ' + (m.role==='user'?'user':'assistant');
-    bubble.textContent = m.content || '';
-    if(m.files && m.files.some(f=>f.textContent)){
-      m.files.forEach(f=>{
-        if(f.textContent){
-          const pre = document.createElement('pre');
-          pre.className='code';
-          pre.textContent = f.name + "\n\n" + f.textContent.slice(0,2000);
-          bubble.appendChild(pre);
+import { createClient } from '@supabase/supabase-js';
+
+export default async function handler(req, res) {
+  // Always enforce JSON content type
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  try {
+    const { messages, userId } = req.body || {};
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ reply: 'Error: messages array is required.' });
+    }
+
+    const groqKey = (process.env.GROQ_API_KEY || '').trim();
+    const openaiKey = (process.env.OPENAI_API_KEY || '').trim();
+    const tavilyKey = (process.env.TAVILY_API_KEY || '').trim();
+    const supabaseUrl = (process.env.SUPABASE_URL || '').trim();
+    const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '').trim();
+
+    if (!groqKey && !openaiKey) {
+      return res.status(200).json({ reply: 'No API keys configured! Please add GROQ_API_KEY.' });
+    }
+
+    // Safely attempt Supabase Client initialization
+    let supabase = null;
+    if (supabaseUrl && supabaseKey) {
+      try {
+        supabase = createClient(supabaseUrl, supabaseKey);
+      } catch (sErr) {
+        console.error('Supabase init error:', sErr.message);
+      }
+    }
+
+    const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
+    const systemPrompt = `You are Clippy — Gelo's AI OS from Marilao, PH. Date: ${now}.
+Be helpful, concise, buddy tone. You have web search access when needed.
+Only say "Good progress today buddy. Let's continue later." when user says bye/goodnight.`;
+
+    const cleanHistory = messages.filter(m => m.role !== 'system').slice(-20);
+    const lastUserQ = cleanHistory.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
+
+    // --- WEB SEARCH ---
+    let webContext = '';
+    const needsWeb = /news|price|weather|today|current|latest|search|who is|what is.*2025|2026|score|stock|nba|weather in/i.test(lastUserQ);
+
+    if (needsWeb && tavilyKey) {
+      try {
+        const sRes = await fetch('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            api_key: tavilyKey,
+            query: lastUserQ,
+            max_results: 5,
+            search_depth: 'basic',
+            include_answer: true
+          })
+        });
+        const sData = await sRes.json();
+        if (sData.results?.length) {
+          webContext = `\n\nWEB SEARCH RESULTS for "${lastUserQ}":\n${sData.results.map(r => `- ${r.title}: ${r.content.slice(0,350)} [${r.url}]`).join('\n')}\nAnswer using these results, cite sources!`;
         }
-      });
+      } catch (e) { console.error('Tavily error:', e.message); }
     }
-    wrap.appendChild(bubble);
-    if(m.files && m.files.length){
-      const filesDiv = document.createElement('div'); filesDiv.className='files';
-      m.files.forEach(f=>{
-        const a = document.createElement('a'); a.className='file'; a.href=f.url; a.target='_blank';
-        a.innerHTML = `<span class="ext">${f.ext}</span><span class="name">${f.name}</span><span class="size">${f.size}</span>`;
-        filesDiv.appendChild(a);
-      });
-      wrap.appendChild(filesDiv);
+
+    const finalMessages = [{ role: 'system', content: systemPrompt + webContext }, ...cleanHistory];
+
+    let reply = null;
+    let lastError = '';
+
+    // 1. Groq Call
+    if (groqKey) {
+      const models = ['llama-3.1-8b-instant', 'gemma2-9b-it', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile'];
+      for (const model of models) {
+        try {
+          const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
+            body: JSON.stringify({ model, messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
+          });
+          const d = await r.json();
+          if (r.ok && d.choices?.[0]?.message?.content) { reply = d.choices[0].message.content; break; }
+          lastError = d?.error?.message || 'Groq request failed';
+        } catch (e) { lastError = e.message; }
+      }
     }
-    list.appendChild(wrap);
-  });
-  chat.scrollTo({top:chat.scrollHeight, behavior:'smooth'});
-  if(typeof Memory !== 'undefined'){ try{ Memory.save(messages); }catch(e){} }
-}
-function renderAttachments(){
-  attachPreview.innerHTML='';
-  attachments.forEach(f=>{
-    const div = document.createElement('div'); div.className='attach-card';
-    div.innerHTML = `<span class="ext">${f.ext}</span><div style="display:flex;flex-direction:column"><span class="name" style="font-size:12px">${f.name}</span><span class="size">${f.size}</span></div><button data-id="${f.id}" style="background:transparent;border:0;color:#6e6e6e;cursor:pointer;font-size:16px;margin-left:8px">×</button>`;
-    attachPreview.appendChild(div);
-  });
-  attachPreview.querySelectorAll('button').forEach(btn=>{
-    btn.onclick = ()=>{ attachments = attachments.filter(a=>a.id!==btn.dataset.id); renderAttachments(); updateSend(); };
-  });
-}
-function updateSend(){
-  if(input.value.trim() || attachments.length){ sendBtn.classList.add('active'); } else { sendBtn.classList.remove('active'); }
-}
-input.addEventListener('input', ()=>{ input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,120)+'px'; updateSend(); });
-attachBtn.onclick = ()=> fileInput.click();
-fileInput.onchange = (e)=>{
-  Array.from(e.target.files||[]).forEach(file=>{
-    const id = Date.now()+Math.random();
-    const url = URL.createObjectURL(file);
-    const ext = (file.name.split('.').pop()||'FILE').toUpperCase();
-    const size = formatSize(file.size);
-    const obj = {id, name:file.name, type:file.type||ext, size, rawSize:file.size, url, ext, textContent:''};
-    if(file.size < 5*1024*1024){
-      const reader = new FileReader();
-      reader.onload = ev=>{
-        try{
-          const txt = ev.target.result;
-          obj.textContent = typeof txt === 'string' ? txt.slice(0, 8000) : '';
-          renderAttachments(); render(); updateSend();
-        }catch{}
-      };
-      try{ reader.readAsText(file); }catch{}
+
+    // 2. OpenAI Fallback
+    if (!reply && openaiKey) {
+      try {
+        const r = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+          body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
+        });
+        const d = await r.json();
+        if (r.ok) reply = d.choices?.[0]?.message?.content;
+        else lastError = d?.error?.message || 'OpenAI request failed';
+      } catch (e) { lastError = e.message; }
     }
-    attachments.push(obj);
-  });
-  fileInput.value=''; renderAttachments(); updateSend();
-};
-async function send(){
-  const content = input.value.trim();
-  if((!content && !attachments.length)) return;
-  const userFiles = [...attachments];
-  const userMsg = {role:'user', content: content || '', files:userFiles, id:Date.now()};
-  messages.push(userMsg);
-  input.value=''; attachments=[]; renderAttachments(); render(); input.style.height='auto'; updateSend();
-  const loadingMsg = {role:'assistant', content:'...', id:'loading'};
-  messages.push(loadingMsg); render();
-  try{
-    let finalContent = content || '';
-    if(userFiles.length){
-      finalContent += "\n\n";
-      userFiles.forEach(f=>{
-        if(f.textContent){
-          finalContent += `[File: ${f.name} (${f.size})]\n${f.textContent.slice(0,4000)}\n\n`;
-        }
-      });
+
+    if (!reply) return res.status(200).json({ reply: `Error: ${lastError || 'Failed to generate response.'}` });
+
+    // --- SUPABASE LOGGING ---
+    if (supabase) {
+      try {
+        await supabase.from('chat_logs').insert([
+          {
+            user_id: userId || 'anonymous',
+            user_message: lastUserQ,
+            bot_reply: reply,
+            created_at: new Date().toISOString()
+          }
+        ]);
+      } catch (dbErr) {
+        console.error('Supabase write fail:', dbErr.message);
+      }
     }
-    const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: [ ...messages.filter(m => m.id !== 'loading').slice(-100).map(m => ({ role: m.role, content: m.content })), { role: 'user', content: finalContent } ] }) });
-    const data = await res.json();
-    console.log('API response', data);
-    if(!res.ok) throw new Error(data.error || JSON.stringify(data));
-    let reply = data.reply;
-    if(!reply) throw new Error('No reply');
-    messages = messages.filter(m=>m.id!=='loading');
-    messages.push({role:'assistant', content: reply, id: Date.now()+1});
-  }catch(e){
-    console.error(e);
-    messages = messages.filter(m=>m.id!=='loading');
-    messages.push({role:'assistant', content:'Error: '+e.message, id: Date.now()+1});
+
+    return res.status(200).json({ reply });
+
+  } catch (e) {
+    console.error('Unhandled top-level error:', e);
+    return res.status(500).json({ reply: `Server error occurred: ${e.message}` });
   }
-  render();
 }
-sendBtn.onclick = send;
-document.getElementById('clearMemory')?.addEventListener('click', ()=>{
-  if(typeof Memory !== 'undefined') Memory.clear();
-  messages = [];
-  render();
-});
-input.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
-render();
-</script>
-<script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js');
-  });
-}
-</script>
-<script>(function(){var loc=location.href.replace(/#.*$/,"");var ATTR_NAMES=["data-product-id","data-productid","data-product_id","product-id","productid","product_id","data-source-entity-id","source-entity-id","source_entity_id","data-product","data-metadata","data-meta"];var DATASET_KEYS=["productId","productid","product_id","sourceEntityId","sourceentityid","source_entity_id","product","metadata","meta"];function readProductId(value){if(typeof value!=="string"||value.length===0)return null;if(/^[0-9]{6,}$/.test(value))return value;var match=value.match(/(?:product(?:_|-)?id|source(?:_|-)?entity(?:_|-)?id)["'=:\s]+([0-9]{6,})/i);return match?match[1]:null}function extractProductId(start){for(var node=start;node&&node!==document.body;node=node.parentElement){for(var i=0;i<ATTR_NAMES.length;i++){var attrValue=node.getAttribute&&node.getAttribute(ATTR_NAMES[i]);var attrProductId=readProductId(attrValue);if(attrProductId)return attrProductId}var dataset=node.dataset||null;if(dataset){for(var j=0;j<DATASET_KEYS.length;j++){var dataValue=dataset[DATASET_KEYS[j]];var dataProductId=readProductId(dataValue);if(dataProductId)return dataProductId}}}return null}function isInlineMediaSlotElement(node){return !!(node&&node.getAttribute&&node.getAttribute("data-clippy-inline-media-slot")!==null)}function findInlineMediaSlot(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(isInlineMediaSlotElement(node))return node}return null}function readInlineMediaUrl(node){if(!node)return null;return node.getAttribute&&((node.getAttribute("data-clippy-inline-media-url")||node.getAttribute("data-url")||node.getAttribute("data_url")))||node.href||null}function stripHash(url){return String(url).replace(/#.*$/,"")}function urlsMatch(a,b){if(!a||!b)return false;try{return stripHash(new URL(a,loc).href)===stripHash(new URL(b,loc).href)}catch(_){return stripHash(a)===stripHash(b)}}function isFirstPartyReelUrl(value){try{var url=new URL(value,loc);if(url.protocol!=="https:")return false;var host=url.hostname.toLowerCase();var supported=host==="instagram.com"||host.endsWith(".instagram.com")||host==="facebook.com"||host.endsWith(".facebook.com");return supported&&/\/reels?\//i.test(url.pathname)}catch(_){return false}}function isInlineMediaUrlClick(node,href){var slot=findInlineMediaSlot(node);if(!slot)return false;var slotUrl=readInlineMediaUrl(slot);if(slotUrl)return urlsMatch(href,slotUrl);return isFirstPartyReelUrl(href)}function findDataHref(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(node.getAttribute){var href=node.getAttribute("data-href")||node.getAttribute("data-url");if(href)return{href:href,node:node}}}return null}var nativeOpen=window.open;window.open=function(url){if(parent!==window&&typeof url==="string"&&/^https?:\/\//.test(url)){parent.postMessage({type:"ecto:usercontent-link-click",href:url},"*");return null}return nativeOpen?nativeOpen.apply(window,arguments):null};document.addEventListener("click",function(e){var target=e.target instanceof Element?e.target:null;if(!target)return;if(parent===window)return;var a=target.closest?target.closest("a[href]"):null;if(a&&a.href&&/^https?:\/\//.test(a.href)&&a.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(a,a.href))return;var productId=extractProductId(target)||extractProductId(a);if(productId){e.preventDefault();parent.postMessage({type:"ecto-artifact-link-click",productId:productId},"*");return}e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:a.href},"*");return}var dataHref=findDataHref(target);if(dataHref&&/^https?:\/\//.test(dataHref.href)&&dataHref.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(dataHref.node,dataHref.href))return;e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:dataHref.href},"*")}},true)})();</script><script>(function(){var FOCUS_TYPE="ecto:artifact-focus-request";var CLOSE_TYPE="ecto:artifact-close-request";function focusArtifactDocument(){var body=document.body;if(!body)return;try{window.focus();}catch(e){}if(!body.hasAttribute("tabindex"))body.setAttribute("tabindex","-1");try{body.focus({preventScroll:true});}catch(e){try{body.focus();}catch(e2){}}}window.addEventListener("message",function(event){if(event.source!==window.parent)return;var data=event.data;if(!data||typeof data!=="object"||data.type!==FOCUS_TYPE)return;if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",focusArtifactDocument,{once:true});return;}focusArtifactDocument();});window.addEventListener("keydown",function(event){if(event.key!=="Escape")return;window.setTimeout(function(){if(event.defaultPrevented)return;window.parent.postMessage({type:CLOSE_TYPE},"*");},0);});})();</script></body>
-</html>
