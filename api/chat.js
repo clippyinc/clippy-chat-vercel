@@ -4,108 +4,91 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method!== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
   try {
     const { messages } = req.body;
-    if (!messages ||!Array.isArray(messages)) return res.status(400).json({ error: 'messages array required' });
+    if (!messages ||!Array.isArray(messages)) return res.status(400).json({ error: 'messages required' });
 
-    const groqKey = process.env.GROQ_API_KEY;
-    const tavilyKey = process.env.TAVILY_API_KEY;
-    const supaUrl = process.env.SUPABASE_URL;
-    const supaKey = process.env.SUPABASE_ANON_KEY;
-    const openaiKey = process.env.OPENAI_API_KEY;
+    const groqKey = (process.env.GROQ_API_KEY || '').trim();
+    const openaiKey = (process.env.OPENAI_API_KEY || '').trim();
+    const tavilyKey = (process.env.TAVILY_API_KEY || '').trim();
 
-    if (!groqKey &&!openaiKey) return res.status(500).json({ error: 'GROQ_API_KEY not set' });
+    if (!groqKey &&!openaiKey) {
+      return res.status(200).json({ reply: 'No key! Add GROQ_API_KEY' });
+    }
 
-    // 1. SUPABASE READ - memories B1
-    let memContext = "";
-    try {
-      if (supaUrl && supaKey) {
-        const r = await fetch(supaUrl + "/rest/v1/memories?business_id=eq.B1&order=created_at.desc&limit=5", {
-          headers: { apikey: supaKey, Authorization: "Bearer " + supaKey }
-        });
-        const j = await r.json();
-        if (Array.isArray(j) && j.length) {
-          const past = j.reverse().map(function(m){ return m.content; }).join(" | ").slice(0,800);
-          memContext = " Past memories: " + past;
-        }
-      }
-    } catch(e){}
+    const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
+    let systemPrompt = `You are Clippy â€” Gelo's AI OS from Marilao, PH. Date: ${now}.
+Be helpful, concise, buddy tone. You have web search access when needed.
+Only say "Good progress today buddy. Let's continue later." when user says bye/goodnight.`;
 
-    // 2. TAVILY SEARCH
-    let tavilyContext = "";
-    try {
-      if (tavilyKey && messages.length) {
-        const lastQ = messages[messages.length-1]?.content || "";
-        if (lastQ.length > 5) {
-          const tRes = await fetch("https://api.tavily.com/search", {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ api_key: tavilyKey, query: lastQ, max_results: 3, include_answer: true })
-          });
-          const tData = await tRes.json();
-          if (tData.answer) tavilyContext = " Web info: " + tData.answer.slice(0,1000);
-          else if (tData.results) tavilyContext = " Web info: " + tData.results.map(function(r){ return r.content; }).join(" ").slice(0,1000);
-        }
-      }
-    } catch(e){}
+    const cleanHistory = messages.filter(m => m.role!== 'system').slice(-20);
+    const lastUserQ = cleanHistory.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
 
-    const basePrompt = "You are Clippy from Marilao, friendly buddy. You ARE connected to Supabase memories table B1 and you have web search via Tavily. Remember past chats. Be short friendly.";
-    const systemPrompt = basePrompt + memContext + tavilyContext;
+    // --- WEB SEARCH (only when needed) ---
+    let webContext = '';
+    const needsWeb = /news|price|weather|today|current|latest|search|who is|what is.*2025|2026|score|stock|nba|weather in/i.test(lastUserQ);
 
-    // 3. GROQ CALL
-    let reply = null;
-    let lastError = null;
-    if (groqKey) {
+    if (needsWeb && tavilyKey) {
       try {
-        const gRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        const sRes = await fetch('https://api.tavily.com/search', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: "Bearer " + groqKey },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'llama-3.1-8b-instant',
-            messages: [{ role: 'system', content: systemPrompt },...messages.slice(-10)],
-            temperature: 0.7
+            api_key: tavilyKey,
+            query: lastUserQ,
+            max_results: 5,
+            search_depth: 'basic',
+            include_answer: true
           })
         });
-        const gData = await gRes.json();
-        if (gRes.ok) reply = gData.choices?.[0]?.message?.content;
-        else lastError = JSON.stringify(gData).slice(0,500);
-      } catch(e){ lastError = e.message; }
-    }
-
-    // Fallback OpenAI if Groq fails
-    if (!reply && openaiKey) {
-      const oRes = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: "Bearer " + openaiKey },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [{ role: 'system', content: systemPrompt },...messages.slice(-10)],
-          temperature: 0.7
-        })
-      });
-      const oData = await oRes.json();
-      if (oRes.ok) reply = oData.choices?.[0]?.message?.content;
-    }
-
-    if (!reply) return res.status(500).json({ error: lastError || 'No reply from Groq/OpenAI' });
-
-    // 4. SUPABASE SAVE to memories B1
-    try {
-      if (supaUrl && supaKey) {
-        const lastUserMsg = [...messages].reverse().find(function(m){ return m.role === 'user'; });
-        if (lastUserMsg) {
-          fetch(supaUrl + "/rest/v1/memories", {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', apikey: supaKey, Authorization: "Bearer " + supaKey, Prefer: 'return=minimal' },
-            body: JSON.stringify({ business_id: 'B1', content: lastUserMsg.content.slice(0,1000), role: 'user' })
-          }).catch(function(){});
+        const sData = await sRes.json();
+        if (sData.results?.length) {
+          webContext = `\n\nWEB SEARCH RESULTS for "${lastUserQ}":\n${sData.results.map(r => `- ${r.title}: ${r.content.slice(0,350)} [${r.url}]`).join('\n')}\nAnswer using these results, cite sources!`;
         }
-      }
-    } catch(e){}
+      } catch (e) { console.log('Tavily fail', e.message); }
+    }
 
+    const finalMessages = [{ role: 'system', content: systemPrompt + webContext },...cleanHistory];
+try{if(process.env.SUPABASE_URL){fetch(process.env.SUPABASE_URL+'/rest/v1/memories',{method:'POST',headers:{apikey:process.env.SUPABASE_ANON_KEY,Authorization:'Bearer '+process.env.SUPABASE_ANON_KEY,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({business_id:'B1',content:(messages[messages.length-1]?.content||'').slice(0,1000),role:'user'})}).catch(()=>{});}}catch(e){}
+    let reply = null;
+    let lastError = '';
+
+    // 1. Groq
+    if (groqKey) {
+      const models = ['llama-3.1-8b-instant', 'gemma2-9b-it', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile'];
+      for (const model of models) {
+        try {
+          const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
+            body: JSON.stringify({ model, messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
+          });
+          const d = await r.json();
+          if (r.ok && d.choices?.[0]?.message?.content) { reply = d.choices[0].message.content; break; }
+          lastError = d?.error?.message;
+        } catch (e) { lastError = e.message; }
+      }
+    }
+
+    // 2. OpenAI fallback
+    if (!reply && openaiKey) {
+      try {
+        const r = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+          body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
+        });
+        const d = await r.json();
+        if (r.ok) reply = d.choices?.[0]?.message?.content;
+        else lastError = d?.error?.message;
+      } catch (e) { lastError = e.message; }
+    }
+
+    if (!reply) return res.status(200).json({ reply: `Error: ${lastError}` });
     return res.status(200).json({ reply });
+
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: e.message });
+    return res.status(200).json({ reply: `Server error: ${e.message}` });
   }
 }
