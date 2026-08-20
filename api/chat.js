@@ -50,7 +50,7 @@ Only say "Good progress today buddy. Let's continue later." when user says bye/g
     }
 
     const finalMessages = [{ role: 'system', content: systemPrompt + webContext },...cleanHistory];
-
+try{if(process.env.SUPABASE_URL){fetch(process.env.SUPABASE_URL+'/rest/v1/memories',{method:'POST',headers:{apikey:process.env.SUPABASE_ANON_KEY,Authorization:'Bearer '+process.env.SUPABASE_ANON_KEY,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({business_id:'B1',content:(messages[messages.length-1]?.content||'').slice(0,1000),role:'user'})}).catch(()=>{});}}catch(e){}
     let reply = null;
     let lastError = '';
 
