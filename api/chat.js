@@ -12,7 +12,14 @@ export default async function handler(req, res) {
     const groqKey = (process.env.GROQ_API_KEY || '').trim();
     const openaiKey = (process.env.OPENAI_API_KEY || '').trim();
     const tavilyKey = (process.env.TAVILY_API_KEY || '').trim();
-
+let memContext = '';
+try{
+  if(process.env.SUPABASE_URL){
+    const r = await fetch(process.env.SUPABASE_URL+'/rest/v1/memories?business_id=eq.B1&order=created_at.desc&limit=5',{headers:{apikey:process.env.SUPABASE_ANON_KEY,Authorization:'Bearer '+process.env.SUPABASE_ANON_KEY}});
+    const j = await r.json();
+    if(j?.length) memContext = ' | Past: ' + j.map(m=>m.content).reverse().join(' | ').slice(0,800);
+  }
+}catch(e){}
     if (!groqKey &&!openaiKey) {
       return res.status(200).json({ reply: 'No key! Add GROQ_API_KEY' });
     }
@@ -20,7 +27,7 @@ export default async function handler(req, res) {
     const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
     let systemPrompt = `You are Clippy â€” Gelo's AI OS from Marilao, PH. Date: ${now}.
 Be helpful, concise, buddy tone. You have web search access when needed.
-Only say "Good progress today buddy. Let's continue later." when user says bye/goodnight.`;
+Only say "Good progress today buddy. Let's continue later." when user says bye/goodnight.` + memContext;
 
     const cleanHistory = messages.filter(m => m.role!== 'system').slice(-20);
     const lastUserQ = cleanHistory.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
