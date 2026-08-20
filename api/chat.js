@@ -87,7 +87,7 @@ Only say "Good progress today buddy. Let's continue later." when user says bye/g
 
     if (!reply) return res.status(200).json({ reply: `Error: ${lastError}` });
     return res.status(200).json({ reply });
-
+if(process.env.SUPABASE_URL){fetch(process.env.SUPABASE_URL+'/rest/v1/memories',{method:'POST',headers:{apikey:process.env.SUPABASE_ANON_KEY,Authorization:'Bearer '+process.env.SUPABASE_ANON_KEY,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({business_id:'B1',content:lastUserQ?.slice(0,500)||'hi',role:'user'})}).catch(()=>{});}
   } catch (e) {
     return res.status(200).json({ reply: `Server error: ${e.message}` });
   }
