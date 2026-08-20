@@ -25,9 +25,8 @@ try{
     }
 
     const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
-    let systemPrompt = `You are Clippy â€” Gelo's AI OS from Marilao, PH. Date: ${now}.
-Be helpful, concise, buddy tone. You have web search access when needed.
-Only say "Good progress today buddy. Let's continue later." when user says bye/goodnight.` + memContext;
+    let basePrompt = "You are Clippy from Marilao, friendly assistant. You ARE connected to Supabase memories table and you remember past chats.";
+let systemPrompt = basePrompt + (typeof memContext !== 'undefined' ? memContext : '');
 
     const cleanHistory = messages.filter(m => m.role!== 'system').slice(-20);
     const lastUserQ = cleanHistory.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
