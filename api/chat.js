@@ -1,31 +1,54 @@
 export default async function handler(req, res) {
+  // Set explicit JSON response headers to prevent non-JSON parsing errors
+  res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method!== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { messages } = req.body;
-    if (!messages ||!Array.isArray(messages)) return res.status(400).json({ error: 'messages required' });
+    const { messages } = req.body || {};
+    if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'messages required' });
 
     const groqKey = (process.env.GROQ_API_KEY || '').trim();
     const openaiKey = (process.env.OPENAI_API_KEY || '').trim();
     const tavilyKey = (process.env.TAVILY_API_KEY || '').trim();
+    const supabaseUrl = (process.env.SUPABASE_URL || '').trim();
+    const supabaseKey = (process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
 
-    if (!groqKey &&!openaiKey) {
+    if (!groqKey && !openaiKey) {
       return res.status(200).json({ reply: 'No key! Add GROQ_API_KEY' });
     }
 
-    const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
-    let systemPrompt = `You are Clippy â€” Gelo's AI OS from Marilao, PH. Date: ${now}.
-Be helpful, concise, buddy tone. You have web search access when needed.
-Only say "Good progress today buddy. Let's continue later." when user says bye/goodnight.`;
-
-    const cleanHistory = messages.filter(m => m.role!== 'system').slice(-20);
+    const cleanHistory = messages.filter(m => m.role !== 'system').slice(-20);
     const lastUserQ = cleanHistory.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
 
-    // --- WEB SEARCH (only when needed) ---
+    // --- SUPABASE: Retrieve Past Context/Memories ---
+    let memoryContext = '';
+    if (supabaseUrl && supabaseKey) {
+      try {
+        const memRes = await fetch(`${supabaseUrl}/rest/v1/memories?business_id=eq.B1&select=content,role&order=created_at.desc&limit=5`, {
+          method: 'GET',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`
+          }
+        });
+        if (memRes.ok) {
+          const memories = await memRes.json();
+          if (memories?.length) {
+            const historyText = memories.reverse().map(m => `[${m.role}]: ${m.content}`).join('\n');
+            memoryContext = `\n\nRECALLED MEMORIES FROM SUPABASE:\n${historyText}`;
+          }
+        }
+      } catch (e) {
+        console.error('Supabase read fail:', e.message);
+      }
+    }
+
+    // --- WEB SEARCH ---
     let webContext = '';
     const needsWeb = /news|price|weather|today|current|latest|search|who is|what is.*2025|2026|score|stock|nba|weather in/i.test(lastUserQ);
 
@@ -44,13 +67,18 @@ Only say "Good progress today buddy. Let's continue later." when user says bye/g
         });
         const sData = await sRes.json();
         if (sData.results?.length) {
-          webContext = `\n\nWEB SEARCH RESULTS for "${lastUserQ}":\n${sData.results.map(r => `- ${r.title}: ${r.content.slice(0,350)} [${r.url}]`).join('\n')}\nAnswer using these results, cite sources!`;
+          webContext = `\n\nWEB SEARCH RESULTS for "${lastUserQ}":\n${sData.results.map(r => `- ${r.title}: ${r.content.slice(0, 350)} [${r.url}]`).join('\n')}\nAnswer using these results, cite sources!`;
         }
-      } catch (e) { console.log('Tavily fail', e.message); }
+      } catch (e) { console.error('Tavily fail:', e.message); }
     }
 
-    const finalMessages = [{ role: 'system', content: systemPrompt + webContext },...cleanHistory];
-try{if(process.env.SUPABASE_URL){fetch(process.env.SUPABASE_URL+'/rest/v1/memories',{method:'POST',headers:{apikey:process.env.SUPABASE_ANON_KEY,Authorization:'Bearer '+process.env.SUPABASE_ANON_KEY,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({business_id:'B1',content:(messages[messages.length-1]?.content||'').slice(0,1000),role:'user'})}).catch(()=>{});}}catch(e){}
+    const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
+    let systemPrompt = `You are Clippy — Gelo's AI OS from Marilao, PH. Date: ${now}.
+Be helpful, concise, buddy tone. You have web search access when needed.
+Only say "Good progress today buddy. Let's continue later." when user says bye/goodnight.${memoryContext}${webContext}`;
+
+    const finalMessages = [{ role: 'system', content: systemPrompt }, ...cleanHistory];
+
     let reply = null;
     let lastError = '';
 
@@ -86,9 +114,28 @@ try{if(process.env.SUPABASE_URL){fetch(process.env.SUPABASE_URL+'/rest/v1/memori
     }
 
     if (!reply) return res.status(200).json({ reply: `Error: ${lastError}` });
+
+    // --- SUPABASE: Async Write User Q & AI Reply ---
+    if (supabaseUrl && supabaseKey) {
+      fetch(`${supabaseUrl}/rest/v1/memories`, {
+        method: 'POST',
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal'
+        },
+        body: JSON.stringify([
+          { business_id: 'B1', content: lastUserQ.slice(0, 1000), role: 'user' },
+          { business_id: 'B1', content: reply.slice(0, 1000), role: 'assistant' }
+        ])
+      }).catch(e => console.error('Supabase write fail:', e.message));
+    }
+
     return res.status(200).json({ reply });
 
   } catch (e) {
-    return res.status(200).json({ reply: `Server error: ${e.message}` });
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(500).json({ reply: `Server error: ${e.message}` });
   }
 }
