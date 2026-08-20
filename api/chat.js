@@ -61,7 +61,7 @@ export default async function handler(req, res) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: "Bearer " + groqKey },
           body: JSON.stringify({
-            model: 'llama-3.3-70b-versatile',
+            model: 'llama-3.1-8b-instant',
             messages: [{ role: 'system', content: systemPrompt },...messages.slice(-10)],
             temperature: 0.7
           })
