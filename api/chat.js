@@ -53,7 +53,14 @@ Only say "Good progress today buddy. Let's continue later." when user says bye/g
 try{if(process.env.SUPABASE_URL){fetch(process.env.SUPABASE_URL+'/rest/v1/memories',{method:'POST',headers:{apikey:process.env.SUPABASE_ANON_KEY,Authorization:'Bearer '+process.env.SUPABASE_ANON_KEY,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({business_id:'B1',content:(messages[messages.length-1]?.content||'').slice(0,1000),role:'user'})}).catch(()=>{});}}catch(e){}
     let reply = null;
     let lastError = '';
-
+let memContext = '';
+try{
+  if(process.env.SUPABASE_URL){
+    const r = await fetch(process.env.SUPABASE_URL+'/rest/v1/memories?business_id=eq.B1&order=created_at.desc&limit=10',{headers:{apikey:process.env.SUPABASE_ANON_KEY,Authorization:'Bearer '+process.env.SUPABASE_ANON_KEY}});
+    const mems = await r.json();
+    if(mems?.length) memContext = '\nPast memories: ' + mems.reverse().map(m=>m.content).join(' | ').slice(0,1000);
+  }
+}catch(e){}
     // 1. Groq
     if (groqKey) {
       const models = ['llama-3.1-8b-instant', 'gemma2-9b-it', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile'];
