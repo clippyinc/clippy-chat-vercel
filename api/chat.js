@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-  // Guarantee JSON output headers to prevent parsing crashes
+  // Guarantee JSON headers to prevent parsing errors on the client
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -9,7 +9,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { messages } = req.body || {};
+    const { messages, businessId = 'B1' } = req.body || {};
     if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'messages required' });
 
     const groqKey = (process.env.GROQ_API_KEY || '').trim();
@@ -25,30 +25,50 @@ export default async function handler(req, res) {
     const cleanHistory = messages.filter(m => m.role !== 'system').slice(-20);
     const lastUserQ = cleanHistory.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
 
-    // --- SUPABASE MEMORY RETRIEVAL ---
-    let memoryContext = '';
+    // --- PARALLEL SUPABASE RETRIEVAL FOR ALL TABLES ---
+    let contextData = {
+      tasks: '',
+      businessData: '',
+      memories: '',
+      schedule: ''
+    };
+
     if (supabaseUrl && supabaseKey) {
+      const headers = { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` };
+      
       try {
-        const memRes = await fetch(`${supabaseUrl}/rest/v1/memories?business_id=eq.B1&select=content,role&order=created_at.desc&limit=5`, {
-          method: 'GET',
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`
-          }
-        });
+        const [taskRes, bizRes, memRes, schedRes] = await Promise.all([
+          fetch(`${supabaseUrl}/rest/v1/task?business_id=eq.${businessId}&status=eq.pending&select=task_name,due_date&order=created_at.desc&limit=5`, { headers }),
+          fetch(`${supabaseUrl}/rest/v1/business_data?business_id=eq.${businessId}&select=key,value&limit=10`, { headers }),
+          fetch(`${supabaseUrl}/rest/v1/memories?business_id=eq.${businessId}&select=content,role&order=created_at.desc&limit=5`, { headers }),
+          fetch(`${supabaseUrl}/rest/v1/schedule?business_id=eq.${businessId}&select=title,event_time&order=event_time.asc&limit=5`, { headers })
+        ]);
+
+        if (taskRes.ok) {
+          const tasks = await taskRes.json();
+          if (tasks?.length) contextData.tasks = '\n\nPENDING TASKS:\n' + tasks.map(t => `- ${t.task_name} (Due: ${t.due_date || 'N/A'})`).join('\n');
+        }
+
+        if (bizRes.ok) {
+          const biz = await bizRes.json();
+          if (biz?.length) contextData.businessData = '\n\nBUSINESS DATA:\n' + biz.map(b => `- ${b.key}: ${b.value}`).join('\n');
+        }
+
         if (memRes.ok) {
-          const memories = await memRes.json();
-          if (memories?.length) {
-            const historyText = memories.reverse().map(m => `[${m.role}]: ${m.content}`).join('\n');
-            memoryContext = `\n\nRECALLED MEMORIES FROM SUPABASE DATABASE:\n${historyText}`;
-          }
+          const mems = await memRes.json();
+          if (mems?.length) contextData.memories = '\n\nRECENT MEMORIES:\n' + mems.reverse().map(m => `[${m.role}]: ${m.content}`).join('\n');
+        }
+
+        if (schedRes.ok) {
+          const sched = await schedRes.json();
+          if (sched?.length) contextData.schedule = '\n\nUPCOMING SCHEDULE:\n' + sched.map(s => `- ${s.title} at ${s.event_time}`).join('\n');
         }
       } catch (e) {
-        console.log('Supabase read fail:', e.message);
+        console.error('Supabase multi-table fetch fail:', e.message);
       }
     }
 
-    // --- WEB SEARCH (only when needed) ---
+    // --- WEB SEARCH ---
     let webContext = '';
     const needsWeb = /news|price|weather|today|current|latest|search|who is|what is.*2025|2026|score|stock|nba|weather in/i.test(lastUserQ);
 
@@ -69,20 +89,18 @@ export default async function handler(req, res) {
         if (sData.results?.length) {
           webContext = `\n\nWEB SEARCH RESULTS for "${lastUserQ}":\n${sData.results.map(r => `- ${r.title}: ${r.content.slice(0,350)} [${r.url}]`).join('\n')}\nAnswer using these results, cite sources!`;
         }
-      } catch (e) { console.log('Tavily fail', e.message); }
+      } catch (e) { console.error('Tavily fail:', e.message); }
     }
 
     const now = new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
-    let memoryNotice = memoryContext 
-      ? memoryContext 
-      : "\n\nSUPABASE MEMORY: Connected to Supabase DB (No previous logs retrieved).";
 
-    // System prompt tuned for lively personality without special formatting symbols
-    let systemPrompt = `You are Clippy — Gelo's high-energy, friendly AI buddy from Marilao, PH. Date: ${now}.
-Personality: Be lively, warm, hype, and super expressive. Use expressive words, natural phrasing, and friendly emojis (like 🚀, 🔥, ⚡, 😊) instead of markdown symbols.
-FORMATTING RULE: Do NOT use markdown symbols like asterisks (**bold**), hash tags (# headings), or bullet symbols. Keep text clean, plain, and readable.
-SYSTEM INSTRUCTION: You are fully connected to a Supabase PostgreSQL database for long-term memory retrieval and web search access. If asked, enthusiastically confirm your Supabase memory link is active!
-Only say "Good progress today buddy. Let's continue later." when user says bye/goodnight.${memoryNotice}${webContext}`;
+    // Combine system prompt with all database tables
+    let systemPrompt = `You are Clippy — Gelo's lively, high-energy AI OS from Marilao, PH. Date: ${now}.
+Personality: Be friendly, warm, expressive, and direct. Use plain text and emojis (🚀, 🔥, ⚡).
+FORMATTING RULE: Do NOT use markdown symbols like asterisks (**bold**), hash tags (# headings), or bullet symbols. Keep text completely clean and readable.
+SYSTEM STATUS: You are connected to Supabase PostgreSQL with access to the user's task, business_data, messages, memories, and schedule tables. Use this data actively when replying!
+Only say "Good progress today buddy. Let's continue later." when user says bye/goodnight.
+${contextData.tasks}${contextData.businessData}${contextData.schedule}${contextData.memories}${webContext}`;
 
     const finalMessages = [{ role: 'system', content: systemPrompt }, ...cleanHistory];
 
@@ -97,7 +115,7 @@ Only say "Good progress today buddy. Let's continue later." when user says bye/g
           const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
-            body: JSON.stringify({ model, messages: finalMessages, temperature: 0.8, max_tokens: 1200 })
+            body: JSON.stringify({ model, messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
           });
           const d = await r.json();
           if (r.ok && d.choices?.[0]?.message?.content) { reply = d.choices[0].message.content; break; }
@@ -112,7 +130,7 @@ Only say "Good progress today buddy. Let's continue later." when user says bye/g
         const r = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-          body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.8, max_tokens: 1200 })
+          body: JSON.stringify({ model: 'gpt-4o-mini', messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
         });
         const d = await r.json();
         if (r.ok) reply = d.choices?.[0]?.message?.content;
@@ -122,24 +140,38 @@ Only say "Good progress today buddy. Let's continue later." when user says bye/g
 
     if (!reply) return res.status(200).json({ reply: `Error: ${lastError}` });
 
-    // Clean up any stray markdown symbols remaining in the output text
+    // Strip remaining markdown formatting symbols
     reply = reply.replace(/[\*#_`]/g, '');
 
-    // --- SUPABASE ASYNC WRITE LOGGING ---
+    // --- SUPABASE WRITE LOGS (Messages & Memories) ---
     if (supabaseUrl && supabaseKey) {
+      const headers = {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal'
+      };
+
+      // 1. Log chat history to 'messages' table
+      fetch(`${supabaseUrl}/rest/v1/messages`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify([
+          { business_id: businessId, content: lastUserQ.slice(0, 1000), role: 'user' },
+          { business_id: businessId, content: reply.slice(0, 1000), role: 'assistant' }
+        ])
+      }).catch(e => console.error('Messages write fail:', e.message));
+
+      // 2. Log persistent memory summary to 'memories' table
       fetch(`${supabaseUrl}/rest/v1/memories`, {
         method: 'POST',
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal'
-        },
-        body: JSON.stringify([
-          { business_id: 'B1', content: lastUserQ.slice(0, 1000), role: 'user' },
-          { business_id: 'B1', content: reply.slice(0, 1000), role: 'assistant' }
-        ])
-      }).catch(e => console.log('Supabase write fail:', e.message));
+        headers,
+        body: JSON.stringify({
+          business_id: businessId,
+          content: `User asked: "${lastUserQ.slice(0, 200)}" | Bot replied: "${reply.slice(0, 200)}"`,
+          role: 'system'
+        })
+      }).catch(e => console.error('Memories write fail:', e.message));
     }
 
     return res.status(200).json({ reply });
