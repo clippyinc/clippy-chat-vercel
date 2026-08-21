@@ -25,7 +25,7 @@ export default async function handler(req, res) {
     const cleanHistory = messages.filter(m => m.role !== 'system').slice(-20);
     const lastUserQ = cleanHistory.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
 
-    // --- PARALLEL SUPABASE RETRIEVAL FOR ALL TABLES ---
+    // --- LINKED SUPABASE RETRIEVAL (JOINING WITH BUSINESSES TABLE) ---
     let contextData = {
       tasks: '',
       businessData: '',
@@ -38,10 +38,10 @@ export default async function handler(req, res) {
       
       try {
         const [taskRes, bizRes, memRes, schedRes] = await Promise.all([
-          fetch(`${supabaseUrl}/rest/v1/task?business_id=eq.${businessId}&status=eq.pending&select=task_name,due_date&order=created_at.desc&limit=5`, { headers }),
-          fetch(`${supabaseUrl}/rest/v1/business_data?business_id=eq.${businessId}&select=key,value&limit=10`, { headers }),
-          fetch(`${supabaseUrl}/rest/v1/memories?business_id=eq.${businessId}&select=content,role&order=created_at.desc&limit=5`, { headers }),
-          fetch(`${supabaseUrl}/rest/v1/schedule?business_id=eq.${businessId}&select=title,event_time&order=event_time.asc&limit=5`, { headers })
+          fetch(`${supabaseUrl}/rest/v1/task?business_id=eq.${businessId}&status=eq.pending&select=task_name,due_date,businesses(name)&order=created_at.desc&limit=5`, { headers }),
+          fetch(`${supabaseUrl}/rest/v1/business_data?business_id=eq.${businessId}&select=key,value,businesses(name)&limit=10`, { headers }),
+          fetch(`${supabaseUrl}/rest/v1/memories?business_id=eq.${businessId}&select=content,role,businesses(name)&order=created_at.desc&limit=5`, { headers }),
+          fetch(`${supabaseUrl}/rest/v1/schedule?business_id=eq.${businessId}&select=title,event_time,businesses(name)&order=event_time.asc&limit=5`, { headers })
         ]);
 
         if (taskRes.ok) {
@@ -143,7 +143,7 @@ ${contextData.tasks}${contextData.businessData}${contextData.schedule}${contextD
     // Strip remaining markdown formatting symbols
     reply = reply.replace(/[\*#_`]/g, '');
 
-    // --- SUPABASE WRITE LOGS (Messages & Memories) ---
+    // --- SUPABASE WRITE LOGS (SEPARATED MESSAGES AND MEMORIES) ---
     if (supabaseUrl && supabaseKey) {
       const headers = {
         apikey: supabaseKey,
@@ -152,7 +152,7 @@ ${contextData.tasks}${contextData.businessData}${contextData.schedule}${contextD
         Prefer: 'return=minimal'
       };
 
-      // 1. Log chat history to 'messages' table
+      // 1. Log chat history strictly to 'messages' table
       fetch(`${supabaseUrl}/rest/v1/messages`, {
         method: 'POST',
         headers,
@@ -162,16 +162,19 @@ ${contextData.tasks}${contextData.businessData}${contextData.schedule}${contextD
         ])
       }).catch(e => console.error('Messages write fail:', e.message));
 
-      // 2. Log persistent memory summary to 'memories' table
-      fetch(`${supabaseUrl}/rest/v1/memories`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          business_id: businessId,
-          content: `User asked: "${lastUserQ.slice(0, 200)}" | Bot replied: "${reply.slice(0, 200)}"`,
-          role: 'system'
-        })
-      }).catch(e => console.error('Memories write fail:', e.message));
+      // 2. Log to 'memories' ONLY when key memory intent is triggered
+      const isMemoryTrigger = /remember|save this|note that|my favorite|important|don't forget/i.test(lastUserQ);
+      if (isMemoryTrigger) {
+        fetch(`${supabaseUrl}/rest/v1/memories`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            business_id: businessId,
+            content: lastUserQ.slice(0, 1000),
+            role: 'user'
+          })
+        }).catch(e => console.error('Memories write fail:', e.message));
+      }
     }
 
     return res.status(200).json({ reply });
