@@ -163,7 +163,26 @@ export default async function handler(req, res) {
     };
     if (supabaseUrl && supabaseKey) {
       try {
-        // ========================================================
+
+ // REMINDER INTENT DETECTION - before Groq call
+const reminderMatch = lastUserQ.match(/remind me to (.+) (tomorrow|today|at \d+|on.+)/i);
+if (reminderMatch && supabaseUrl && supabaseKey) {
+  try {
+    const title = reminderMatch[1].trim();
+    const when = reminderMatch[2] + ' ' + (lastUserQ.match(/at \d+.*$/i)?.[0] || '11 AM');
+    const remRes = await fetch(`${supabaseUrl}/rest/v1/schedules`, {
+      method: 'POST',
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify({
+        business_id: businessId,
+        title: title,
+        scheduled_at: new Date(Date.now() + 86400000).toISOString(), // tomorrow 11am fallback
+        status: 'pending'
+      })
+    });
+    if (remRes.ok) contextData.schedule += `\n\nNEW REMINDER JUST SET: ${title}`;
+  } catch {}
+}       // ========================================================
         // Retrieve database information
         // ========================================================
         const [
