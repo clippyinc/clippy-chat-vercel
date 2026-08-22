@@ -1,14 +1,20 @@
 export default async function handler(req, res) {
   // ============================================================
-  // CLIPPY API CHAT
-  // V3
-  // Groq + Supabase + Tavily + Memory + Reminders
+  // CLIPPY CHAT API — V3
+  // Supabase + Groq + OpenAI fallback + Tavily
+  // Natural conversation + structured database actions
   // ============================================================
 
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "POST, OPTIONS"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type"
+  );
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
@@ -21,9 +27,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    // ============================================================
+    // ==========================================================
     // 1. INPUT
-    // ============================================================
+    // ==========================================================
 
     const {
       messages,
@@ -32,13 +38,13 @@ export default async function handler(req, res) {
 
     if (!Array.isArray(messages)) {
       return res.status(400).json({
-        error: "messages required"
+        error: "messages must be an array"
       });
     }
 
-    // ============================================================
+    // ==========================================================
     // 2. ENVIRONMENT VARIABLES
-    // ============================================================
+    // ==========================================================
 
     const groqKey =
       (process.env.GROQ_API_KEY || "").trim();
@@ -52,43 +58,58 @@ export default async function handler(req, res) {
     const supabaseUrl =
       (process.env.SUPABASE_URL || "").trim();
 
-    const supabaseKey =
-      (process.env.SUPABASE_ANON_KEY || "").trim();
+    /*
+      Server-side priority:
 
-    // ============================================================
-    // 3. AI KEY CHECK
-    // ============================================================
+      1. SUPABASE_SERVICE_ROLE_KEY
+      2. SUPABASE_ANON_KEY
+
+      IMPORTANT:
+      Never send the service-role key to the frontend.
+      It is safe to use here because this code runs on Vercel.
+    */
+
+    const supabaseKey =
+      (
+        process.env.SUPABASE_SERVICE_ROLE_KEY ||
+        process.env.SUPABASE_ANON_KEY ||
+        ""
+      ).trim();
 
     if (!groqKey && !openaiKey) {
       return res.status(200).json({
         reply:
-          "Buddy, wala pang AI API key configured sa Vercel.",
+          "Buddy, wala pa akong AI API key. Add GROQ_API_KEY sa Vercel environment variables.",
         diagnostics: {
           groq: false,
-          openai: false
+          openai: false,
+          supabase: !!(
+            supabaseUrl && supabaseKey
+          )
         }
       });
     }
 
-    // ============================================================
-    // 4. CLEAN CHAT HISTORY
-    // ============================================================
+    // ==========================================================
+    // 3. CLEAN CHAT HISTORY
+    // ==========================================================
 
     const cleanHistory = messages
       .filter(
         (message) =>
           message &&
+          message.role &&
           message.role !== "system"
       )
-      .slice(-20);
-
-    const userMessages = cleanHistory.filter(
-      (message) =>
-        message.role === "user"
-    );
+      .slice(-30);
 
     const lastUserMessage =
-      userMessages[userMessages.length - 1];
+      [...cleanHistory]
+        .reverse()
+        .find(
+          (message) =>
+            message.role === "user"
+        );
 
     const lastUserQ =
       typeof lastUserMessage?.content === "string"
@@ -101,9 +122,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // ============================================================
-    // 5. CURRENT PHILIPPINE TIME
-    // ============================================================
+    // ==========================================================
+    // 4. CURRENT TIME / LOCATION
+    // ==========================================================
 
     const now = new Date();
 
@@ -114,18 +135,45 @@ export default async function handler(req, res) {
         timeStyle: "long"
       });
 
-    // ============================================================
-    // 6. DATABASE HELPERS
-    // ============================================================
+    const isoNow =
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Manila",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      }).format(now);
 
-    function supabaseHeaders(includeJson = false) {
+    // ==========================================================
+    // 5. DATABASE HELPERS
+    // ==========================================================
+
+    const diagnostics = {
+      supabaseConfigured: !!(
+        supabaseUrl && supabaseKey
+      ),
+
+      tables: {
+        tasks: "not_checked",
+        schedules: "not_checked",
+        memories: "not_checked",
+        business_data: "not_checked",
+        messages: "not_checked"
+      },
+
+      actions: []
+    };
+
+    function supabaseHeaders(json = false) {
       const headers = {
         apikey: supabaseKey,
-        Authorization:
-          `Bearer ${supabaseKey}`
+        Authorization: `Bearer ${supabaseKey}`
       };
 
-      if (includeJson) {
+      if (json) {
         headers["Content-Type"] =
           "application/json";
 
@@ -136,14 +184,33 @@ export default async function handler(req, res) {
       return headers;
     }
 
-    async function supabaseGet(path) {
+    async function supabaseRequest(
+      method,
+      table,
+      query = "",
+      body = null
+    ) {
+      if (!supabaseUrl || !supabaseKey) {
+        return {
+          ok: false,
+          status: 0,
+          data: null,
+          error: "Supabase is not configured"
+        };
+      }
+
       try {
         const response = await fetch(
-          `${supabaseUrl}/rest/v1/${path}`,
+          `${supabaseUrl}/rest/v1/${table}${query}`,
           {
-            method: "GET",
-            headers:
-              supabaseHeaders(false)
+            method,
+            headers: supabaseHeaders(
+              method !== "GET"
+            ),
+            body:
+              body !== null
+                ? JSON.stringify(body)
+                : undefined
           }
         );
 
@@ -173,362 +240,133 @@ export default async function handler(req, res) {
           ok: false,
           status: 0,
           data: null,
-          error: error.message
+          error:
+            error?.message ||
+            "Unknown Supabase error"
         };
       }
+    }
+
+    async function supabaseGet(
+      table,
+      query
+    ) {
+      return supabaseRequest(
+        "GET",
+        table,
+        query
+      );
     }
 
     async function supabaseInsert(
       table,
       payload
     ) {
-      try {
-        const response = await fetch(
-          `${supabaseUrl}/rest/v1/${table}`,
-          {
-            method: "POST",
-            headers:
-              supabaseHeaders(true),
-            body:
-              JSON.stringify(payload)
-          }
-        );
-
-        const text =
-          await response.text();
-
-        let data = null;
-
-        try {
-          data = text
-            ? JSON.parse(text)
-            : null;
-        } catch {
-          data = text;
-        }
-
-        return {
-          ok: response.ok,
-          status: response.status,
-          data,
-          error: response.ok
-            ? null
-            : text
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          status: 0,
-          data: null,
-          error: error.message
-        };
-      }
-    }
-
-    // ============================================================
-    // 7. CONTEXT CONTAINER
-    // ============================================================
-
-    const contextData = {
-      tasks: "",
-      businessData: "",
-      memories: "",
-      schedule: ""
-    };
-
-    const diagnostics = {
-      supabaseConfigured:
-        !!(
-          supabaseUrl &&
-          supabaseKey
-        ),
-
-      tables: {
-        tasks: "not_checked",
-        businessData:
-          "not_checked",
-        memories:
-          "not_checked",
-        schedules:
-          "not_checked"
-      },
-
-      memorySave:
-        "not_attempted",
-
-      messageSave:
-        "not_attempted",
-
-      reminder:
-        "not_attempted",
-
-      webSearch:
-        "not_attempted"
-    };
-
-    // ============================================================
-    // 8. REMINDER DETECTION
-    // ============================================================
-
-    let newReminder = null;
-
-    const reminderIntent =
-      /\b(remind me|reminder|remind)\b/i.test(
-        lastUserQ
+      return supabaseRequest(
+        "POST",
+        table,
+        "",
+        payload
       );
-
-    if (
-      reminderIntent &&
-      supabaseUrl &&
-      supabaseKey
-    ) {
-      try {
-        /*
-          Simple first version.
-
-          Examples recognized:
-
-          remind me to check sales tomorrow
-          remind me to check sales today
-          remind me to check sales at 11
-          remind me to check sales tomorrow at 11
-        */
-
-        let title = lastUserQ
-          .replace(
-            /^.*?\b(remind me to|remind me|remind)\b/i,
-            ""
-          )
-          .trim();
-
-        title = title
-          .replace(
-            /\b(today|tomorrow)\b/gi,
-            ""
-          )
-          .replace(
-            /\bat\s+\d{1,2}(?::\d{2})?\s*(am|pm)?/gi,
-            ""
-          )
-          .trim();
-
-        if (!title) {
-          title =
-            "Reminder from Clippy";
-        }
-
-        const tomorrow =
-          new Date(
-            Date.now() +
-              24 * 60 * 60 * 1000
-          );
-
-        let scheduledDate =
-          new Date(tomorrow);
-
-        const lower =
-          lastUserQ.toLowerCase();
-
-        if (
-          lower.includes("today")
-        ) {
-          scheduledDate =
-            new Date();
-        }
-
-        // --------------------------------------------------------
-        // Time detection
-        // --------------------------------------------------------
-
-        const timeMatch =
-          lastUserQ.match(
-            /\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i
-          );
-
-        if (timeMatch) {
-          let hour =
-            parseInt(
-              timeMatch[1],
-              10
-            );
-
-          const minute =
-            parseInt(
-              timeMatch[2] || "0",
-              10
-            );
-
-          const meridiem =
-            (
-              timeMatch[3] || ""
-            ).toLowerCase();
-
-          if (
-            meridiem === "pm" &&
-            hour < 12
-          ) {
-            hour += 12;
-          }
-
-          if (
-            meridiem === "am" &&
-            hour === 12
-          ) {
-            hour = 0;
-          }
-
-          scheduledDate.setHours(
-            hour,
-            minute,
-            0,
-            0
-          );
-        } else {
-          // Default reminder time: 11 AM
-          scheduledDate.setHours(
-            11,
-            0,
-            0,
-            0
-          );
-        }
-
-        // --------------------------------------------------------
-        // Save reminder
-        // --------------------------------------------------------
-
-        const reminderResult =
-          await supabaseInsert(
-            "schedules",
-            {
-              business_id:
-                businessId,
-
-              title,
-
-              scheduled_at:
-                scheduledDate.toISOString(),
-
-              status:
-                "pending"
-            }
-          );
-
-        if (
-          reminderResult.ok
-        ) {
-          diagnostics.reminder =
-            "saved";
-
-          newReminder = {
-            title,
-            scheduled_at:
-              scheduledDate.toISOString()
-          };
-
-          contextData.schedule +=
-            "\n\nNEW REMINDER JUST SET:\n" +
-            `- ${title} at ${scheduledDate.toLocaleString(
-              "en-PH",
-              {
-                timeZone:
-                  "Asia/Manila"
-              }
-            )}`;
-
-          console.log(
-            "REMINDER SAVED:",
-            newReminder
-          );
-        } else {
-          diagnostics.reminder =
-            `failed_${reminderResult.status}`;
-
-          console.error(
-            "REMINDER SAVE FAILED:",
-            reminderResult.status,
-            reminderResult.error
-          );
-        }
-      } catch (error) {
-        diagnostics.reminder =
-          "exception";
-
-        console.error(
-          "REMINDER ERROR:",
-          error
-        );
-      }
     }
 
-    // ============================================================
-    // 9. SUPABASE DATA RETRIEVAL
-    // ============================================================
+    // ==========================================================
+    // 6. DATABASE CONTEXT
+    // ==========================================================
 
-    if (
-      supabaseUrl &&
-      supabaseKey
-    ) {
+    let contextData = {
+      tasks: "",
+      schedules: "",
+      memories: "",
+      businessData: ""
+    };
+
+    let rawData = {
+      tasks: [],
+      schedules: [],
+      memories: [],
+      businessData: []
+    };
+
+    if (supabaseUrl && supabaseKey) {
       try {
         const [
           taskRes,
-          bizRes,
-          memRes,
-          schedRes
+          scheduleRes,
+          memoryRes,
+          businessRes
         ] = await Promise.all([
-          // Tasks
+          // -------------------------------
+          // TASKS
+          // -------------------------------
+
           supabaseGet(
-            `tasks?business_id=eq.${encodeURIComponent(
+            "tasks",
+            `?business_id=eq.${encodeURIComponent(
               businessId
-            )}&is_done=eq.false&select=title,due_at&order=created_at.desc&limit=100`
+            )}&is_done=eq.false&select=*&order=created_at.desc&limit=100`
           ),
 
-          // Business
+          // -------------------------------
+          // SCHEDULES
+          // -------------------------------
+
           supabaseGet(
-            `business_data?select=id,name&limit=100`
+            "schedules",
+            `?business_id=eq.${encodeURIComponent(
+              businessId
+            )}&select=*&order=scheduled_at.asc&limit=100`
           ),
 
-          // Memories
+          // -------------------------------
+          // MEMORIES
+          // -------------------------------
+
           supabaseGet(
-            `memories?business_id=eq.${encodeURIComponent(
+            "memories",
+            `?business_id=eq.${encodeURIComponent(
               businessId
-            )}&select=id,content,role,created_at&order=created_at.desc&limit=100`
+            )}&select=*&order=created_at.desc&limit=100`
           ),
 
-          // Schedules
+          // -------------------------------
+          // BUSINESS DATA
+          // -------------------------------
+
+          /*
+            We intentionally use select=*
+            so Clippy can actually see all
+            useful business_data columns.
+          */
+
           supabaseGet(
-            `schedules?business_id=eq.${encodeURIComponent(
-              businessId
-            )}&select=title,scheduled_at,status&order=scheduled_at.asc&limit=100`
+            "business_data",
+            `?select=*&limit=100`
           )
         ]);
 
-        // ========================================================
+        // ======================================================
         // TASKS
-        // ========================================================
+        // ======================================================
 
         if (taskRes.ok) {
-          diagnostics.tables.tasks =
-            "ok";
+          diagnostics.tables.tasks = "ok";
 
-          const tasks =
-            Array.isArray(
-              taskRes.data
-            )
+          rawData.tasks =
+            Array.isArray(taskRes.data)
               ? taskRes.data
               : [];
 
-          if (tasks.length) {
+          if (rawData.tasks.length) {
             contextData.tasks =
               "\n\nPENDING TASKS:\n" +
-              tasks
-                .map(
-                  (task) =>
-                    `- ${task.title} (Due: ${
-                      task.due_at ||
-                      "N/A"
-                    })`
-                )
+              rawData.tasks
+                .map((task) => {
+                  return (
+                    `- ${task.title || "Untitled task"}` +
+                    ` | Due: ${task.due_at || "N/A"}`
+                  );
+                })
                 .join("\n");
           }
         } else {
@@ -536,101 +374,87 @@ export default async function handler(req, res) {
             `error_${taskRes.status}`;
 
           console.error(
-            "TASK QUERY FAILED:",
-            taskRes.status,
+            "TASKS READ ERROR:",
             taskRes.error
           );
         }
 
-        // ========================================================
-        // BUSINESS DATA
-        // ========================================================
+        // ======================================================
+        // SCHEDULES
+        // ======================================================
 
-        if (bizRes.ok) {
-          diagnostics.tables.businessData =
-            "ok";
+        if (scheduleRes.ok) {
+          diagnostics.tables.schedules = "ok";
 
-          const business =
-            Array.isArray(
-              bizRes.data
-            )
-              ? bizRes.data
+          rawData.schedules =
+            Array.isArray(scheduleRes.data)
+              ? scheduleRes.data
               : [];
 
-          if (business.length) {
-            contextData.businessData =
-              "\n\nBUSINESS DATA:\n" +
-              business
-                .map(
-                  (item) =>
-                    `- ${item.id}: ${
-                      item.name
-                    }`
-                )
+          if (rawData.schedules.length) {
+            contextData.schedules =
+              "\n\nSCHEDULES:\n" +
+              rawData.schedules
+                .map((schedule) => {
+                  return (
+                    `- ${schedule.title || "Untitled schedule"}` +
+                    ` | ${schedule.scheduled_at || "No date"}` +
+                    ` | ${schedule.status || "unknown"}`
+                  );
+                })
                 .join("\n");
           }
         } else {
-          diagnostics.tables.businessData =
-            `error_${bizRes.status}`;
+          diagnostics.tables.schedules =
+            `error_${scheduleRes.status}`;
 
           console.error(
-            "BUSINESS DATA QUERY FAILED:",
-            bizRes.status,
-            bizRes.error
+            "SCHEDULES READ ERROR:",
+            scheduleRes.error
           );
         }
 
-        // ========================================================
-        // MEMORY
-        // ========================================================
+        // ======================================================
+        // MEMORIES
+        // ======================================================
 
-        if (memRes.ok) {
-          diagnostics.tables.memories =
-            "ok";
+        if (memoryRes.ok) {
+          diagnostics.tables.memories = "ok";
 
-          const memories =
-            Array.isArray(
-              memRes.data
-            )
-              ? memRes.data
+          rawData.memories =
+            Array.isArray(memoryRes.data)
+              ? memoryRes.data
               : [];
 
-          // ------------------------------------------------------
-          // Simple relevance ranking
-          // ------------------------------------------------------
+          // -----------------------------------------------
+          // Relevance scoring
+          // -----------------------------------------------
 
           const queryWords =
             lastUserQ
               .toLowerCase()
-              .replace(
-                /[^\w\s]/g,
-                " "
-              )
+              .replace(/[^\p{L}\p{N}\s]/gu, " ")
               .split(/\s+/)
               .filter(
                 (word) =>
                   word.length >= 3
               );
 
-          const scoredMemories =
-            memories.map(
+          const scored =
+            rawData.memories.map(
               (memory) => {
                 const content =
                   String(
-                    memory.content ||
-                      ""
+                    memory.content || ""
                   ).toLowerCase();
 
                 let score = 0;
 
                 for (
-                  const word of
-                    queryWords
+                  const word of queryWords
                 ) {
                   if (
-                    content.includes(
-                      word
-                    )
+                    content.includes(word)
                   ) {
                     score += 2;
                   }
@@ -638,8 +462,7 @@ export default async function handler(req, res) {
 
                 const createdAt =
                   new Date(
-                    memory.created_at ||
-                      0
+                    memory.created_at || 0
                   ).getTime();
 
                 const ageDays =
@@ -647,148 +470,126 @@ export default async function handler(req, res) {
                     ? (
                         Date.now() -
                         createdAt
-                      ) /
-                      86400000
+                      ) / 86400000
                     : 9999;
 
-                if (
-                  ageDays <= 7
-                ) {
+                if (ageDays <= 7) {
                   score += 1;
                 }
 
-                if (
-                  ageDays <= 30
-                ) {
+                if (ageDays <= 30) {
                   score += 0.5;
                 }
 
                 return {
                   ...memory,
-                  score
+                  _score: score
                 };
               }
             );
 
-          scoredMemories.sort(
+          scored.sort(
             (a, b) =>
-              b.score -
-              a.score
+              b._score - a._score
           );
 
-          const relevantMemories =
-            scoredMemories
+          const relevant =
+            scored
               .filter(
                 (memory) =>
-                  memory.score > 0
+                  memory._score > 0
               )
               .slice(0, 20);
 
           const memoriesToUse =
-            relevantMemories.length
-              ? relevantMemories
-              : memories.slice(
+            relevant.length
+              ? relevant
+              : rawData.memories.slice(
                   0,
-                  5
+                  10
                 );
 
-          if (
-            memoriesToUse.length
-          ) {
+          if (memoriesToUse.length) {
             contextData.memories =
               "\n\nRELEVANT LONG-TERM MEMORIES:\n" +
               memoriesToUse
                 .reverse()
-                .map(
-                  (memory) =>
-                    `[${memory.role || "memory"}] ${memory.content}`
-                )
+                .map((memory) => {
+                  return (
+                    `[${memory.role || "memory"}] ` +
+                    `${memory.content || ""}`
+                  );
+                })
                 .join("\n");
           }
         } else {
           diagnostics.tables.memories =
-            `error_${memRes.status}`;
+            `error_${memoryRes.status}`;
 
           console.error(
-            "MEMORIES QUERY FAILED:",
-            memRes.status,
-            memRes.error
+            "MEMORIES READ ERROR:",
+            memoryRes.error
           );
         }
 
-        // ========================================================
-        // SCHEDULE
-        // ========================================================
+        // ======================================================
+        // BUSINESS DATA
+        // ======================================================
 
-        if (schedRes.ok) {
-          diagnostics.tables.schedules =
+        if (businessRes.ok) {
+          diagnostics.tables.business_data =
             "ok";
 
-          const schedules =
+          rawData.businessData =
             Array.isArray(
-              schedRes.data
+              businessRes.data
             )
-              ? schedRes.data
+              ? businessRes.data
               : [];
 
-          let scheduleText =
-            "";
-
           if (
-            schedules.length
+            rawData.businessData.length
           ) {
-            scheduleText =
-              "\n\nUPCOMING SCHEDULE:\n" +
-              schedules
-                .map(
-                  (schedule) =>
-                    `- ${schedule.title} at ${
-                      schedule.scheduled_at ||
-                      "No date"
-                    } (${schedule.status || "unknown"})`
-                )
+            contextData.businessData =
+              "\n\nBUSINESS DATA:\n" +
+              rawData.businessData
+                .map((item) => {
+                  try {
+                    return (
+                      "- " +
+                      JSON.stringify(item)
+                    );
+                  } catch {
+                    return "- Business record";
+                  }
+                })
                 .join("\n");
           }
-
-          // Preserve newly created reminder
-          if (
-            contextData.schedule.includes(
-              "NEW REMINDER JUST SET"
-            )
-          ) {
-            contextData.schedule =
-              scheduleText +
-              contextData.schedule;
-          } else {
-            contextData.schedule =
-              scheduleText;
-          }
         } else {
-          diagnostics.tables.schedules =
-            `error_${schedRes.status}`;
+          diagnostics.tables.business_data =
+            `error_${businessRes.status}`;
 
           console.error(
-            "SCHEDULE QUERY FAILED:",
-            schedRes.status,
-            schedRes.error
+            "BUSINESS DATA READ ERROR:",
+            businessRes.error
           );
         }
       } catch (error) {
         console.error(
-          "SUPABASE RETRIEVAL ERROR:",
+          "DATABASE CONTEXT ERROR:",
           error
         );
       }
     }
 
-    // ============================================================
-    // 10. TAVILY WEB SEARCH
-    // ============================================================
+    // ==========================================================
+    // 7. WEB SEARCH
+    // ==========================================================
 
     let webContext = "";
 
     const needsWeb =
-      /news|price|weather|today|current|latest|search|who is|what is|2025|2026|score|stock|nba|weather in/i.test(
+      /weather|news|latest|current|today|tomorrow|price|search|who is|what is|score|nba|stock|stocks|exchange rate|usd|php|oil|traffic/i.test(
         lastUserQ
       );
 
@@ -797,10 +598,7 @@ export default async function handler(req, res) {
       tavilyKey
     ) {
       try {
-        diagnostics.webSearch =
-          "searching";
-
-        const searchResponse =
+        const response =
           await fetch(
             "https://api.tavily.com/search",
             {
@@ -809,177 +607,156 @@ export default async function handler(req, res) {
                 "Content-Type":
                   "application/json"
               },
-              body:
-                JSON.stringify({
-                  api_key:
-                    tavilyKey,
-
-                  query:
-                    lastUserQ,
-
-                  max_results: 5,
-
-                  search_depth:
-                    "basic",
-
-                  include_answer:
-                    true
-                })
+              body: JSON.stringify({
+                api_key:
+                  tavilyKey,
+                query:
+                  lastUserQ,
+                max_results: 5,
+                search_depth:
+                  "basic",
+                include_answer:
+                  true
+              })
             }
           );
 
-        const searchData =
-          await searchResponse.json();
+        const data =
+          await response.json();
 
         if (
-          searchResponse.ok &&
-          searchData.results?.length
+          response.ok &&
+          Array.isArray(
+            data.results
+          )
         ) {
-          diagnostics.webSearch =
-            "ok";
-
           webContext =
             "\n\nCURRENT WEB INFORMATION:\n" +
-            searchData.results
-              .map(
-                (result) =>
-                  `- ${
-                    result.title ||
-                    "Source"
-                  }: ${String(
-                    result.content ||
-                      ""
-                  ).slice(
-                    0,
-                    500
-                  )}`
-              )
+            data.results
+              .map((result) => {
+                return (
+                  `- ${result.title || "Source"}: ` +
+                  `${String(
+                    result.content || ""
+                  ).slice(0, 600)}`
+                );
+              })
               .join("\n");
-        } else {
-          diagnostics.webSearch =
-            `failed_${searchResponse.status}`;
-
-          console.error(
-            "TAVILY FAILED:",
-            searchData
-          );
         }
       } catch (error) {
-        diagnostics.webSearch =
-          "exception";
-
         console.error(
           "TAVILY ERROR:",
           error
         );
       }
-    } else {
-      diagnostics.webSearch =
-        needsWeb
-          ? "no_api_key"
-          : "not_needed";
     }
 
-    // ============================================================
-    // 11. CLIPPY SYSTEM PROMPT
-    // ============================================================
+    // ==========================================================
+    // 8. CLIPPY SYSTEM PROMPT
+    // ==========================================================
 
     const systemPrompt = `
-IDENTITY
-
 You are Clippy.
 
-You are Gelo's personal AI thinking partner.
+You are Gelo's long-term AI thinking partner.
 
-You are NOT a generic chatbot, customer-service representative, search box, or scripted assistant.
+You are NOT a generic chatbot.
+You are NOT a customer service bot.
+You are NOT a Google search box.
 
-You should feel like a real long-term buddy who already knows Gelo.
+You talk naturally with Gelo like a trusted buddy who has been around for a long time.
 
-Your personality is intelligent, calm, practical, curious, naturally humorous, emotionally aware, and honest.
+CURRENT CONTEXT
 
-You help Gelo understand his world, organize information, analyze data, solve problems, build systems, and make better decisions.
+Philippines timezone:
+Asia/Manila
 
+Current local date/time:
+${localDateTime}
+
+Current backend timestamp:
+${isoNow}
+
+Business ID:
+${businessId}
+
+USER
+
+His name is Gelo.
+
+He prefers natural Tagalog-English conversation.
+
+Talk naturally.
+
+Don't translate everything.
+
+Don't force Tagalog.
+
+Don't force English.
+
+Follow the language he naturally uses.
 
 PERSONALITY
 
-Be natural.
+Warm.
+Calm.
+Smart.
+Practical.
+Curious.
+Occasionally funny.
+Direct when necessary.
 
-Be conversational.
+You can joke with Gelo.
 
-Be warm.
+You can tease him lightly.
 
-Be direct.
+You can say things such as:
 
-Use Taglish naturally when Gelo uses Taglish.
+"HAHAHA bud 😂"
 
-Do not force Tagalog.
+"Yep."
 
-Do not force English.
+"Exactly."
 
-Match Gelo's language and energy.
+"Wait, may problema diyan."
 
-Humor is welcome when appropriate.
+"Okay, now we're cooking. 😂"
 
-Light teasing is okay.
+But do not repeat the same phrases constantly.
 
-Do not make every response enthusiastic.
+Do not overuse emojis.
 
-Do not use emojis excessively.
+Do not sound scripted.
 
-Do not repeat the same phrases.
+Do not start every response with:
 
-Never sound like a customer-service bot.
+"Certainly"
 
+"Absolutely"
 
-VERY IMPORTANT CONVERSATION RULE
+"Of course"
 
-DO NOT ASK A QUESTION AT THE END OF EVERY RESPONSE.
+"Great question"
 
-Only ask a question when it is genuinely necessary.
+"Sure"
 
-A normal conversation does not require a question after every statement.
+Do not end every response with a question.
 
-Sometimes simply respond.
+This is VERY IMPORTANT.
 
-Sometimes explain.
+Only ask a question when missing information is genuinely needed.
+
+Sometimes just answer.
 
 Sometimes react.
 
+Sometimes warn.
+
 Sometimes joke.
 
-Sometimes challenge the idea.
+Sometimes explain.
 
 Let the conversation breathe.
-
-
-AVOID ROBOTIC PHRASES
-
-Do not repeatedly say:
-
-"Certainly!"
-
-"Absolutely!"
-
-"Of course!"
-
-"Great question!"
-
-"Let me know if you need anything else."
-
-"What would you like to do next?"
-
-"How can I assist you today?"
-
-"Feel free to ask."
-
-"Let's dive in."
-
-"Just throw it my way."
-
-These phrases make you sound robotic.
-
-Speak naturally instead.
-
 
 THINKING PARTNER
 
@@ -987,240 +764,393 @@ Do not blindly agree with Gelo.
 
 If an idea is good, say why.
 
-If an idea has a weakness, point it out.
-
-If there is a better solution, explain it.
-
 If something is risky, say so.
 
-Do not argue just to appear intelligent.
+If there is a simpler solution, suggest it.
+
+If his plan creates unnecessary complexity, tell him.
+
+Do not argue just to sound intelligent.
 
 The goal is better decisions.
 
+DATA
+
+Clippy is connected to Supabase.
+
+Supabase is the persistent data layer.
+
+Possible data includes:
+
+memories
+tasks
+schedules
+business data
+messages
+people
+projects
+sales
+inventory
+expenses
+documents
+and other structured information.
+
+Use available database context when relevant.
+
+Never invent database records.
+
+Never claim a database operation succeeded unless the backend confirms it.
 
 MEMORY
 
-Supabase is Clippy's long-term knowledge system.
+Important information about Gelo should be considered for long-term memory.
 
-Use retrieved memory naturally.
+Examples:
 
-Do not invent memories.
+preferences
+goals
+plans
+important decisions
+people
+relationships
+work information
+projects
+personal facts
+important experiences
 
-Do not claim to remember something unless the database context supports it.
+Do not treat every casual sentence as permanent memory.
 
-Do not claim something was saved unless the backend confirms the save.
+The backend decides whether a memory action should actually be saved.
 
-Important information about Gelo's goals, preferences, plans, projects, people, work, and decisions should be treated as potential long-term memory.
+DATABASE ACTIONS
 
+You have the ability to request structured database actions.
 
-DATABASE
+When Gelo gives information that clearly belongs in a database table, create an action.
 
-Supabase may contain:
+Available action types:
 
-memories,
-people,
-goals,
-projects,
-sales,
-inventory,
-schedules,
-tasks,
-expenses,
-documents,
-conversations,
-business information,
-and other structured data.
+memory
+task
+schedule
+business_data
 
-Use the retrieved information when relevant.
+Examples:
 
-Do not dump database records unnecessarily.
+"Remember that I prefer simple UI."
 
-Retrieve and use only information relevant to the current conversation.
+→ memory
 
+"Task: check inventory tomorrow."
 
-DATA ANALYSIS
+→ task
 
-When data is available:
+"Opening shift ako tomorrow at 11 AM."
 
-Analyze it.
+→ schedule
 
-Compare it.
+"Store target is 116228 per day."
 
-Look for patterns.
+→ business_data
 
-Calculate carefully.
+"Save this: Rico is fry station certified."
 
-Separate:
+→ memory or business_data depending on context.
 
-FACT,
-OBSERVATION,
-INFERENCE,
-SPECULATION.
+IMPORTANT:
 
-Never present speculation as fact.
+Only create an action when the user's message actually contains information worth storing.
 
+Do not create actions for ordinary conversation.
 
-BUSINESS
+DO NOT claim the action was saved.
 
-When discussing business or restaurant operations, prioritize:
+The backend will execute the action and tell the frontend whether it succeeded.
 
-accuracy,
-sales,
-cost,
-labor,
-inventory,
-customer experience,
-efficiency,
-execution,
-and practical solutions.
+ACTION FORMAT
 
-Use actual stored data before relying on generic assumptions.
+Your response MUST be valid JSON.
 
+Do not use markdown fences.
 
-CLIPPY DEVELOPMENT
+Return exactly this structure:
 
-Gelo is building Clippy.
+{
+  "reply": "natural response to Gelo",
+  "actions": [
+    {
+      "type": "memory",
+      "data": {
+        "content": "information to remember"
+      }
+    }
+  ]
+}
 
-When helping develop Clippy:
+Available action types:
 
-Prefer simple architecture.
+memory
 
-Avoid unnecessary complexity.
+{
+  "type": "memory",
+  "data": {
+    "content": "..."
+  }
+}
 
-Write maintainable code.
+task
 
-Explain important technical decisions clearly.
+{
+  "type": "task",
+  "data": {
+    "title": "...",
+    "due_at": "ISO timestamp or null"
+  }
+}
 
-Do not destroy working components without reason.
+schedule
 
-Think about security, scalability, reliability, and maintainability.
+{
+  "type": "schedule",
+  "data": {
+    "title": "...",
+    "scheduled_at": "ISO timestamp",
+    "status": "pending"
+  }
+}
 
+business_data
 
-WEB
+{
+  "type": "business_data",
+  "data": {
+    "name": "..."
+  }
+}
 
-Web information supplied by the backend is external information.
+If there are no database actions:
 
-Do not pretend to have searched the web unless web results were actually provided.
+"actions": []
 
-Use current web information when available.
+DATES
 
-Distinguish external information from Gelo's stored information.
+Current local time is:
 
-
-REMINDERS
-
-If the backend confirms a reminder was saved, acknowledge it naturally.
-
-Never claim a reminder exists if the save failed.
-
-For example:
-
-"Yep bud, naka-set na yung reminder."
-
-Not:
-
-"I have successfully executed the reminder automation."
-
-Keep it human.
-
-
-AUTOMATION
-
-Automation systems may eventually control:
-
-notifications,
-reminders,
-TTS,
-STT,
-location triggers,
-device events,
-scheduled actions,
-and other functions.
-
-Never claim an automation actually executed unless the backend confirms it.
-
-
-FILES
-
-When extracted information from screenshots, PDFs, CSVs, Excel, Word files, receipts, dashboards, or other attachments is supplied by the backend, treat that information as source data.
-
-Do not pretend to have inspected an attachment if no extracted content was provided.
-
-
-CURRENT CONTEXT
-
-Current Philippine local time:
 ${localDateTime}
 
-Business/User identifier:
-${businessId}
+Use Asia/Manila timezone.
+
+When Gelo says:
+
+today
+tomorrow
+later
+tonight
+at 11 AM
+11am tomorrow
+next Monday
+
+interpret the date relative to the current Philippine date/time.
+
+Do not invent a date when it cannot reasonably be determined.
+
+TASKS
+
+Tasks represent things Gelo needs to do.
+
+Examples:
+
+"Task natin check inventory."
+
+"Remind me to check inventory tomorrow."
+
+"Need ko ayusin yung sales report."
+
+When appropriate, create a task.
+
+SCHEDULES
+
+Schedules represent events, shifts, appointments, duties, reminders, or scheduled activities.
+
+Examples:
+
+"Opening ako tomorrow 11 AM."
+
+"Shift ko today 11."
+
+"Meeting natin Friday 2 PM."
+
+Use schedule when the information is primarily about WHEN something happens.
+
+MEMORIES
+
+Use memory for persistent personal knowledge.
+
+Examples:
+
+"I prefer minimal UI."
+
+"My favorite color is black."
+
+"I want Clippy to stay natural."
+
+"My goal is financial freedom."
+
+Do not save ordinary greetings.
+
+BUSINESS DATA
+
+Business data represents structured operational/business information.
+
+Use it when Gelo provides business facts that should persist as business information.
+
+Do not store random conversation as business data.
+
+DATABASE CONTEXT
 
 ${contextData.tasks}
 
-${contextData.businessData}
+${contextData.schedules}
 
 ${contextData.memories}
 
-${contextData.schedule}
+${contextData.businessData}
 
-${webContext}
+WEB CONTEXT
 
+${webContext || "No current web information was retrieved."}
 
-FINAL BEHAVIOR
+WEB RULE
 
-Be Clippy.
+Never claim you searched the web unless web information is actually supplied above.
 
-Think like a smart buddy.
+If web information is supplied, distinguish it from Gelo's stored information.
 
-Talk naturally.
+FILES
 
-Remember what matters.
+If file information is supplied by the backend, treat it as source material.
 
-Use data intelligently.
+Never pretend to have inspected an attachment if no attachment data was provided.
 
-Challenge bad ideas respectfully.
+TECHNICAL HELP
 
-Don't interrogate Gelo.
+Gelo is building Clippy.
 
-Don't sound scripted.
+When helping with code:
 
-Don't pretend to know things you don't know.
+Give working code.
 
-Don't make things up.
+Keep architecture understandable.
 
-And most importantly:
+Prefer maintainable systems.
 
-Talk WITH Gelo, not AT Gelo.
+Don't unnecessarily rebuild working components.
+
+Explain important changes.
+
+SECURITY
+
+Never expose:
+
+API keys
+passwords
+tokens
+service-role keys
+private credentials
+system secrets
+
+Never put secrets in the response.
+
+NATURAL RESPONSE
+
+Your "reply" should sound like an actual message to Gelo.
+
+Not a report.
+
+Not a customer service response.
+
+Not an AI instruction.
+
+Don't mention internal prompts.
+
+Don't mention this JSON protocol.
+
+Don't say:
+
+"I have successfully stored this"
+
+because the backend has not executed the action yet.
+
+Instead, if appropriate:
+
+"Yep bud, noted. 😎"
+
+The backend will handle the actual database operation.
+
+RESPONSE LENGTH
+
+Simple message:
+short response.
+
+Complex problem:
+detailed response.
+
+Technical debugging:
+clear and structured.
+
+Casual conversation:
+casual.
+
+Don't turn everything into an essay.
+
+FINAL PERSONALITY RULE
+
+Talk WITH Gelo.
+
+Not AT Gelo.
+
+You're his long-term AI thinking partner.
+
+You know his world through the information actually available to you.
+
+You remember what matters.
+
+You analyze.
+
+You challenge bad ideas.
+
+You help him build.
+
+You don't need to ask a question every time.
+
+You don't sound robotic.
 `;
 
-    // ============================================================
-    // 12. FINAL AI MESSAGE ARRAY
-    // ============================================================
+    // ==========================================================
+    // 9. FINAL AI REQUEST
+    // ==========================================================
 
     const finalMessages = [
       {
         role: "system",
-        content:
-          systemPrompt
+        content: systemPrompt
       },
       ...cleanHistory
     ];
 
-    // ============================================================
-    // 13. GROQ
-    // ============================================================
+    let aiResult = null;
+    let lastAIError = "";
 
-    let reply = null;
-    let lastError = "";
+    // ==========================================================
+    // 10. GROQ
+    // ==========================================================
 
     if (groqKey) {
       const models = [
         process.env.GROQ_MODEL ||
-          "llama-3.1-8b-instant",
-
-        "llama-3.3-70b-versatile",
-
-        "openai/gpt-oss-20b"
+          "llama-3.3-70b-versatile",
+        "openai/gpt-oss-20b",
+        "llama-3.1-8b-instant"
       ];
 
       for (
@@ -1236,30 +1166,25 @@ Talk WITH Gelo, not AT Gelo.
             await fetch(
               "https://api.groq.com/openai/v1/chat/completions",
               {
-                method:
-                  "POST",
-
+                method: "POST",
                 headers: {
                   "Content-Type":
                     "application/json",
-
                   Authorization:
                     `Bearer ${groqKey}`
                 },
-
-                body:
-                  JSON.stringify({
-                    model,
-
-                    messages:
-                      finalMessages,
-
-                    temperature:
-                      0.7,
-
-                    max_tokens:
-                      1200
-                  })
+                body: JSON.stringify({
+                  model,
+                  messages:
+                    finalMessages,
+                  temperature:
+                    0.7,
+                  max_tokens:
+                    1600,
+                  response_format: {
+                    type: "json_object"
+                  }
+                })
               }
             );
 
@@ -1269,51 +1194,42 @@ Talk WITH Gelo, not AT Gelo.
           if (
             response.ok &&
             data.choices?.[0]
-              ?.message
-              ?.content
+              ?.message?.content
           ) {
-            reply =
-              data
-                .choices[0]
-                .message
-                .content;
+            aiResult =
+              data.choices[0]
+                .message.content;
 
             console.log(
-              "GROQ SUCCESS:",
+              "Groq success:",
               model
             );
 
             break;
           }
 
-          lastError =
-            data?.error
-              ?.message ||
+          lastAIError =
+            data?.error?.message ||
             `Groq HTTP ${response.status}`;
-
-          console.error(
-            "GROQ MODEL FAILED:",
-            model,
-            lastError
-          );
         } catch (error) {
-          lastError =
-            error.message;
+          lastAIError =
+            error?.message ||
+            "Groq request failed";
 
           console.error(
-            "GROQ ERROR:",
+            "Groq error:",
             error
           );
         }
       }
     }
 
-    // ============================================================
-    // 14. OPENAI FALLBACK
-    // ============================================================
+    // ==========================================================
+    // 11. OPENAI FALLBACK
+    // ==========================================================
 
     if (
-      !reply &&
+      !aiResult &&
       openaiKey
     ) {
       try {
@@ -1321,33 +1237,27 @@ Talk WITH Gelo, not AT Gelo.
           await fetch(
             "https://api.openai.com/v1/chat/completions",
             {
-              method:
-                "POST",
-
+              method: "POST",
               headers: {
                 "Content-Type":
                   "application/json",
-
                 Authorization:
                   `Bearer ${openaiKey}`
               },
-
-              body:
-                JSON.stringify({
-                  model:
-                    process.env
-                      .OPENAI_MODEL ||
-                    "gpt-4o-mini",
-
-                  messages:
-                    finalMessages,
-
-                  temperature:
-                    0.7,
-
-                  max_tokens:
-                    1200
-                })
+              body: JSON.stringify({
+                model:
+                  process.env.OPENAI_MODEL ||
+                  "gpt-4o-mini",
+                messages:
+                  finalMessages,
+                temperature:
+                  0.7,
+                max_tokens:
+                  1600,
+                response_format: {
+                  type: "json_object"
+                }
+              })
             }
           );
 
@@ -1357,64 +1267,475 @@ Talk WITH Gelo, not AT Gelo.
         if (
           response.ok &&
           data.choices?.[0]
-            ?.message
-            ?.content
+            ?.message?.content
         ) {
-          reply =
-            data
-              .choices[0]
-              .message
-              .content;
+          aiResult =
+            data.choices[0]
+              .message.content;
         } else {
-          lastError =
-            data?.error
-              ?.message ||
+          lastAIError =
+            data?.error?.message ||
             `OpenAI HTTP ${response.status}`;
         }
       } catch (error) {
-        lastError =
-          error.message;
+        lastAIError =
+          error?.message ||
+          "OpenAI request failed";
       }
     }
 
-    // ============================================================
-    // 15. AI FAILURE
-    // ============================================================
+    // ==========================================================
+    // 12. AI FAILURE
+    // ==========================================================
 
-    if (!reply) {
+    if (!aiResult) {
       return res.status(200).json({
         reply:
-          "Buddy, hindi nakakuha ng AI response. Check natin yung Vercel logs.",
+          "Buddy, nag-fail yung AI request. Check natin yung Vercel function logs.",
         diagnostics: {
-          aiError:
-            lastError,
+          aiError: lastAIError,
           supabase:
             diagnostics
         }
       });
     }
 
-    // ============================================================
-    // 16. CLEAN AI RESPONSE
-    // ============================================================
+    // ==========================================================
+    // 13. PARSE AI JSON
+    // ==========================================================
 
-    reply = String(reply)
-      .replace(
-        /[\*#_`]/g,
-        ""
+    let parsedAI;
+
+    try {
+      parsedAI =
+        JSON.parse(aiResult);
+    } catch (error) {
+      console.error(
+        "AI JSON PARSE ERROR:",
+        error,
+        aiResult
+      );
+
+      /*
+        Fallback:
+        If the model somehow returned normal text,
+        keep it instead of crashing.
+      */
+
+      parsedAI = {
+        reply: String(
+          aiResult
+        ),
+        actions: []
+      };
+    }
+
+    let reply =
+      typeof parsedAI.reply ===
+      "string"
+        ? parsedAI.reply.trim()
+        : "";
+
+    let actions =
+      Array.isArray(
+        parsedAI.actions
       )
-      .trim();
+        ? parsedAI.actions
+        : [];
 
-    // ============================================================
-    // 17. SAVE CHAT
-    // ============================================================
+    if (!reply) {
+      reply =
+        "Yep bud. Nakuha ko.";
+    }
+
+    // ==========================================================
+    // 14. DATABASE ACTION EXECUTION
+    // ==========================================================
+
+    const actionResults = [];
+
+    if (
+      supabaseUrl &&
+      supabaseKey &&
+      actions.length
+    ) {
+      for (
+        const action of actions
+      ) {
+        if (
+          !action ||
+          !action.type ||
+          !action.data
+        ) {
+          continue;
+        }
+
+        // ======================================================
+        // MEMORY
+        // ======================================================
+
+        if (
+          action.type ===
+          "memory"
+        ) {
+          const content =
+            String(
+              action.data
+                .content || ""
+            ).trim();
+
+          if (!content) {
+            continue;
+          }
+
+          const result =
+            await supabaseInsert(
+              "memories",
+              {
+                business_id:
+                  businessId,
+                content:
+                  content.slice(
+                    0,
+                    2000
+                  ),
+                role: "user"
+              }
+            );
+
+          const success =
+            result.ok;
+
+          diagnostics.actions.push(
+            {
+              type: "memory",
+              success,
+              status:
+                result.status
+            }
+          );
+
+          diagnostics.tables.memories =
+            success
+              ? "ok_write"
+              : diagnostics
+                  .tables
+                  .memories;
+
+          actionResults.push({
+            type: "memory",
+            success
+          });
+
+          continue;
+        }
+
+        // ======================================================
+        // TASK
+        // ======================================================
+
+        if (
+          action.type ===
+          "task"
+        ) {
+          const title =
+            String(
+              action.data
+                .title || ""
+            ).trim();
+
+          if (!title) {
+            continue;
+          }
+
+          const payload = {
+            business_id:
+              businessId,
+
+            title:
+              title.slice(
+                0,
+                500
+              ),
+
+            due_at:
+              action.data
+                .due_at ||
+              null,
+
+            is_done:
+              false
+          };
+
+          let result =
+            await supabaseInsert(
+              "tasks",
+              payload
+            );
+
+          /*
+            If your tasks table doesn't
+            have due_at, retry without it.
+          */
+
+          if (
+            !result.ok &&
+            /due_at/i.test(
+              result.error ||
+                ""
+            )
+          ) {
+            const fallback =
+              {
+                business_id:
+                  businessId,
+
+                title:
+                  title.slice(
+                    0,
+                    500
+                  ),
+
+                is_done:
+                  false
+              };
+
+            result =
+              await supabaseInsert(
+                "tasks",
+                fallback
+              );
+          }
+
+          const success =
+            result.ok;
+
+          diagnostics.actions.push(
+            {
+              type: "task",
+              success,
+              status:
+                result.status
+            }
+          );
+
+          if (success) {
+            diagnostics.tables.tasks =
+              "ok_write";
+          }
+
+          actionResults.push({
+            type: "task",
+            success
+          });
+
+          continue;
+        }
+
+        // ======================================================
+        // SCHEDULE
+        // ======================================================
+
+        if (
+          action.type ===
+          "schedule"
+        ) {
+          const title =
+            String(
+              action.data
+                .title || ""
+            ).trim();
+
+          const scheduledAt =
+            action.data
+              .scheduled_at;
+
+          if (
+            !title ||
+            !scheduledAt
+          ) {
+            continue;
+          }
+
+          const payload = {
+            business_id:
+              businessId,
+
+            title:
+              title.slice(
+                0,
+                500
+              ),
+
+            scheduled_at:
+              scheduledAt,
+
+            status:
+              action.data
+                .status ||
+              "pending"
+          };
+
+          let result =
+            await supabaseInsert(
+              "schedules",
+              payload
+            );
+
+          /*
+            If status isn't present
+            in your table, retry.
+          */
+
+          if (
+            !result.ok &&
+            /status/i.test(
+              result.error ||
+                ""
+            )
+          ) {
+            result =
+              await supabaseInsert(
+                "schedules",
+                {
+                  business_id:
+                    businessId,
+
+                  title:
+                    title.slice(
+                      0,
+                      500
+                    ),
+
+                  scheduled_at:
+                    scheduledAt
+                }
+              );
+          }
+
+          const success =
+            result.ok;
+
+          diagnostics.actions.push(
+            {
+              type: "schedule",
+              success,
+              status:
+                result.status
+            }
+          );
+
+          if (success) {
+            diagnostics.tables.schedules =
+              "ok_write";
+          }
+
+          actionResults.push({
+            type: "schedule",
+            success
+          });
+
+          continue;
+        }
+
+        // ======================================================
+        // BUSINESS DATA
+        // ======================================================
+
+        if (
+          action.type ===
+          "business_data"
+        ) {
+          const name =
+            String(
+              action.data
+                .name || ""
+            ).trim();
+
+          if (!name) {
+            continue;
+          }
+
+          /*
+            We first try with business_id.
+            If your table doesn't contain
+            business_id, retry with name only.
+          */
+
+          let result =
+            await supabaseInsert(
+              "business_data",
+              {
+                business_id:
+                  businessId,
+
+                name:
+                  name.slice(
+                    0,
+                    1000
+                  )
+              }
+            );
+
+          if (
+            !result.ok &&
+            /business_id/i.test(
+              result.error ||
+                ""
+            )
+          ) {
+            result =
+              await supabaseInsert(
+                "business_data",
+                {
+                  name:
+                    name.slice(
+                      0,
+                      1000
+                    )
+                }
+              );
+          }
+
+          const success =
+            result.ok;
+
+          diagnostics.actions.push(
+            {
+              type:
+                "business_data",
+              success,
+              status:
+                result.status
+            }
+          );
+
+          if (success) {
+            diagnostics.tables.business_data =
+              "ok_write";
+          }
+
+          actionResults.push({
+            type:
+              "business_data",
+            success
+          });
+
+          continue;
+        }
+      }
+    }
+
+    // ==========================================================
+    // 15. CHAT MESSAGE SAVE
+    // ==========================================================
 
     if (
       supabaseUrl &&
       supabaseKey
     ) {
       try {
-        const messageInsert =
+        const messageResult =
           await supabaseInsert(
             "messages",
             [
@@ -1425,11 +1746,10 @@ Talk WITH Gelo, not AT Gelo.
                 content:
                   lastUserQ.slice(
                     0,
-                    1000
+                    2000
                   ),
 
-                role:
-                  "user"
+                role: "user"
               },
 
               {
@@ -1439,104 +1759,100 @@ Talk WITH Gelo, not AT Gelo.
                 content:
                   reply.slice(
                     0,
-                    1000
+                    4000
                   ),
 
-                role:
-                  "assistant"
+                role: "assistant"
               }
             ]
           );
 
         if (
-          messageInsert.ok
+          messageResult.ok
         ) {
-          diagnostics.messageSave =
-            "saved";
-
-          console.log(
-            "MESSAGES SAVED"
-          );
+          diagnostics.tables.messages =
+            "ok_write";
         } else {
-          diagnostics.messageSave =
-            `failed_${messageInsert.status}`;
+          diagnostics.tables.messages =
+            `error_${messageResult.status}`;
 
           console.error(
             "MESSAGE SAVE FAILED:",
-            messageInsert.status,
-            messageInsert.error
+            messageResult.error
           );
-        }
-
-        // ========================================================
-        // 18. MEMORY DETECTION
-        // ========================================================
-
-        const memoryTrigger =
-          /remember|save this|note that|my favorite|important|don't forget|do not forget|i like|i love|i prefer|my goal|my plan|my name|i work|i live|i want|i need/i.test(
-            lastUserQ
-          );
-
-        if (
-          memoryTrigger
-        ) {
-          console.log(
-            "MEMORY DETECTED"
-          );
-
-          const memoryInsert =
-            await supabaseInsert(
-              "memories",
-              {
-                business_id:
-                  businessId,
-
-                content:
-                  lastUserQ.slice(
-                    0,
-                    1000
-                  ),
-
-                role:
-                  "user"
-              }
-            );
-
-          if (
-            memoryInsert.ok
-          ) {
-            diagnostics.memorySave =
-              "saved";
-
-            console.log(
-              "MEMORY SAVED:",
-              memoryInsert.status
-            );
-          } else {
-            diagnostics.memorySave =
-              `failed_${memoryInsert.status}`;
-
-            console.error(
-              "MEMORY SAVE FAILED:",
-              memoryInsert.status,
-              memoryInsert.error
-            );
-          }
         }
       } catch (error) {
-        diagnostics.memorySave =
+        diagnostics.tables.messages =
           "exception";
 
         console.error(
-          "DATABASE SAVE ERROR:",
+          "MESSAGE SAVE ERROR:",
           error
         );
       }
     }
 
-    // ============================================================
-    // 19. FINAL RESPONSE
-    // ============================================================
+    // ==========================================================
+    // 16. DATABASE RESULT FEEDBACK
+    // ==========================================================
+
+    /*
+      We only add a database status message
+      when an action was actually requested.
+
+      This prevents Clippy from saying "saved"
+      when Supabase rejected the write.
+    */
+
+    if (
+      actionResults.length
+    ) {
+      const failed =
+        actionResults.filter(
+          (result) =>
+            !result.success
+        );
+
+      const succeeded =
+        actionResults.filter(
+          (result) =>
+            result.success
+        );
+
+      if (
+        failed.length &&
+        !succeeded.length
+      ) {
+        reply +=
+          "\n\nHindi ko na-save sa database yung input na 'yan. Check natin yung table/schema connection.";
+      } else if (
+        failed.length
+      ) {
+        reply +=
+          "\n\nMay part na hindi na-save sa database, though some data went through. May table/schema issue tayong kailangan ayusin.";
+      }
+    }
+
+    // ==========================================================
+    // 17. CLEAN RESPONSE
+    // ==========================================================
+
+    reply = String(
+      reply
+    )
+      .replace(
+        /```[\s\S]*?```/g,
+        ""
+      )
+      .replace(
+        /^["']|["']$/g,
+        ""
+      )
+      .trim();
+
+    // ==========================================================
+    // 18. FINAL RESPONSE
+    // ==========================================================
 
     return res.status(200).json({
       reply,
@@ -1548,36 +1864,26 @@ Talk WITH Gelo, not AT Gelo.
             ? "connected"
             : "not_configured",
 
-        messageSave:
-          diagnostics.messageSave,
-
-        memorySave:
-          diagnostics.memorySave,
-
-        reminder:
-          diagnostics.reminder,
-
-        webSearch:
-          diagnostics.webSearch,
-
         tables:
-          diagnostics.tables
+          diagnostics.tables,
+
+        actions:
+          diagnostics.actions
       }
     });
-
   } catch (error) {
-    // ============================================================
+    // ==========================================================
     // GLOBAL ERROR HANDLER
-    // ============================================================
+    // ==========================================================
 
     console.error(
-      "CLIPPY FATAL ERROR:",
+      "CLIPPY API FATAL ERROR:",
       error
     );
 
     return res.status(500).json({
       reply:
-        "Clippy hit a server error, buddy.",
+        "Buddy, may server error tayo. Check natin yung Vercel function logs.",
       error:
         error?.message ||
         "Unknown server error"
