@@ -107,7 +107,7 @@ export default async function handler(req, res) {
     let aiResult = null, lastErr = "";
 
     if (groqKey) {
-      const models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+const models = ["llama-3.3-70b-versatile", "llama3-8b-8192", "mixtral-8x7b-32768"];
       for (const model of models) {
         try {
           const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
