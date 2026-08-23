@@ -52,17 +52,244 @@ pre.code{margin-top:10px;background:#0a0a0a;border:1px solid #212121;border-radi
 <script>
 const list=document.getElementById('list'),chat=document.getElementById('chat'),input=document.getElementById('msg'),sendBtn=document.getElementById('send'),voiceBtn=document.getElementById('voiceBtn'),fileInput=document.getElementById('fileInput'),attachBtn=document.getElementById('attachBtn'),attachPreview=document.getElementById('attachPreview');
 let defaultMessages=[]; let messages=(typeof Memory!=='undefined'?Memory.init(defaultMessages):defaultMessages); let attachments=[];
+
 function formatSize(b){if(b<1024)return b+' B';if(b<1024*1024)return (b/1024).toFixed(1)+' KB';return (b/1024/1024).toFixed(1)+' MB';}
-function mdToHtml(t){if(!t)return '';let h=t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');h=h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g,(m,alt,url)=>{const l=url.toLowerCase();if(l.match(/\.(mp4|webm|mov)$/))return `<video src="${url}" controls playsinline></video>`;return `<img src="${url}" alt="${alt}" loading="lazy" onerror="this.style.display='none'">`;});h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');return h.split('\n').join('<br>');}
-function render(){list.innerHTML='';messages.forEach(m=>{if(!m.content&&(!m.files||!m.files.length))return;const wrap=document.createElement('div');wrap.style.display='flex';wrap.style.flexDirection='column';wrap.style.gap='8px';wrap.style.alignItems=m.role==='user'?'flex-end':'flex-start';const bubble=document.createElement('div');bubble.className='bubble '+(m.role==='user'?'user':'assistant');bubble.innerHTML=mdToHtml(m.content||'');if(m.files&&m.files.some(f=>f.textContent)){m.files.forEach(f=>{if(f.textContent){const pre=document.createElement('pre');pre.className='code';pre.textContent=f.name+"\n\n"+f.textContent.slice(0,500);bubble.appendChild(pre);}});}wrap.appendChild(bubble);if(m.files&&m.files.length){const filesDiv=document.createElement('div');filesDiv.className='files';m.files.forEach(f=>{const a=document.createElement('a');a.className='file';a.href=f.url;a.target='_blank';a.innerHTML=`<span class="ext">${f.ext}</span><span class="name">${f.name}</span><span class="size">${f.size}</span>`;filesDiv.appendChild(a);});wrap.appendChild(filesDiv);}list.appendChild(wrap);});chat.scrollTo({top:chat.scrollHeight,behavior:'smooth'});if(typeof Memory!=='undefined'){try{Memory.save(messages);}catch(e){}}}
-function renderAttachments(){attachPreview.innerHTML='';attachments.forEach(f=>{const div=document.createElement('div');div.className='attach-card';div.innerHTML=`<span class="ext" style="font-size:11px;background:#212121;padding:3px 6px;border-radius:6px;color:#8e8e8e;font-weight:600">${f.ext}</span><div style="display:flex;flex-direction:column"><span style="font-size:12px">${f.name}</span><span style="font-size:11px;color:#6e6e6e">${f.size}</span></div><button data-id="${f.id}" style="background:transparent;border:0;color:#6e6e6e;cursor:pointer;font-size:16px;margin-left:8px">×</button>`;attachPreview.appendChild(div);});attachPreview.querySelectorAll('button').forEach(btn=>{btn.onclick=()=>{attachments=attachments.filter(a=>a.id!==btn.dataset.id);renderAttachments();updateSend();};});}
-function updateSend(){const has=input.value.trim()||attachments.length>0;if(has){sendBtn.style.display='flex';sendBtn.classList.add('active');voiceBtn.style.display='none';}else{sendBtn.style.display='none';sendBtn.classList.remove('active');voiceBtn.style.display='flex';}}
-input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,120)+'px';updateSend();});
+
+function mdToHtml(t){
+  if(!t)return '';
+  let h=t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  h=h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g,(m,alt,url)=>{
+    const l=url.toLowerCase();
+    if(l.match(/\.(mp4|webm|mov)$/))return `<video src="${url}" controls playsinline></video>`;
+    return `<img src="${url}" alt="${alt}" loading="lazy" onerror="this.style.display='none'">`;
+  });
+  h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
+  return h.split('\n').join('<br>');
+}
+
+function render(){
+  list.innerHTML='';
+  messages.forEach(m=>{
+    if(!m.content&&(!m.files||!m.files.length))return;
+    const wrap=document.createElement('div');
+    wrap.style.display='flex';
+    wrap.style.flexDirection='column';
+    wrap.style.gap='8px';
+    wrap.style.alignItems=m.role==='user'?'flex-end':'flex-start';
+    
+    const bubble=document.createElement('div');
+    bubble.className='bubble '+(m.role==='user'?'user':'assistant');
+    bubble.innerHTML=mdToHtml(m.content||'');
+    
+    if(m.files&&m.files.some(f=>f.textContent)){
+      m.files.forEach(f=>{
+        if(f.textContent){
+          const pre=document.createElement('pre');
+          pre.className='code';
+          pre.textContent=f.name+"\n\n"+f.textContent.slice(0,500);
+          bubble.appendChild(pre);
+        }
+      });
+    }
+    wrap.appendChild(bubble);
+    
+    if(m.files&&m.files.length){
+      const filesDiv=document.createElement('div');
+      filesDiv.className='files';
+      m.files.forEach(f=>{
+        const a=document.createElement('a');
+        a.className='file';
+        a.href=f.url;
+        a.target='_blank';
+        a.innerHTML=`<span class="ext">${f.ext}</span><span class="name">${f.name}</span><span class="size">${f.size}</span>`;
+        filesDiv.appendChild(a);
+      });
+      wrap.appendChild(filesDiv);
+    }
+    list.appendChild(wrap);
+  });
+  chat.scrollTo({top:chat.scrollHeight,behavior:'smooth'});
+  if(typeof Memory!=='undefined'){try{Memory.save(messages);}catch(e){}}
+}
+
+function renderAttachments(){
+  attachPreview.innerHTML='';
+  attachments.forEach(f=>{
+    const div=document.createElement('div');
+    div.className='attach-card';
+    div.innerHTML=`<span class="ext" style="font-size:11px;background:#212121;padding:3px 6px;border-radius:6px;color:#8e8e8e;font-weight:600">${f.ext}</span><div style="display:flex;flex-direction:column"><span style="font-size:12px">${f.name}</span><span style="font-size:11px;color:#6e6e6e">${f.size}</span></div><button data-id="${f.id}" style="background:transparent;border:0;color:#6e6e6e;cursor:pointer;font-size:16px;margin-left:8px">×</button>`;
+    attachPreview.appendChild(div);
+  });
+  attachPreview.querySelectorAll('button').forEach(btn=>{
+    btn.onclick=()=>{
+      attachments=attachments.filter(a=>a.id!==btn.dataset.id);
+      renderAttachments();
+      updateSend();
+    };
+  });
+}
+
+function updateSend(){
+  const has=input.value.trim()||attachments.length>0;
+  if(has){
+    sendBtn.style.display='flex';
+    sendBtn.classList.add('active');
+    voiceBtn.style.display='none';
+  }else{
+    sendBtn.style.display='none';
+    sendBtn.classList.remove('active');
+    voiceBtn.style.display='flex';
+  }
+}
+
+input.addEventListener('input',()=>{
+  input.style.height='auto';
+  input.style.height=Math.min(input.scrollHeight,120)+'px';
+  updateSend();
+});
+
 attachBtn.onclick=()=>fileInput.click();
-fileInput.onchange=(e)=>{Array.from(e.target.files||[]).forEach(file=>{const id=Date.now()+Math.random();const url=URL.createObjectURL(file);const ext=(file.name.split('.').pop()||'FILE').toUpperCase();const size=formatSize(file.size);const obj={id,name:file.name,type:file.type||ext,size,rawSize:file.size,url,ext,textContent:''};if(file.size<2*1024*1024){const reader=new FileReader();reader.onload=ev=>{try{const txt=ev.target.result;obj.textContent=typeof txt==='string'?txt.slice(0,500):'';renderAttachments();render();updateSend();}catch{}};try{reader.readAsText(file);}catch{}}attachments.push(obj);});fileInput.value='';renderAttachments();updateSend();};
+
+fileInput.onchange=(e)=>{
+  Array.from(e.target.files||[]).forEach(file=>{
+    const id=Date.now()+Math.random();
+    const url=URL.createObjectURL(file);
+    const ext=(file.name.split('.').pop()||'FILE').toUpperCase();
+    const size=formatSize(file.size);
+    const obj={id,name:file.name,type:file.type||ext,size,rawSize:file.size,url,ext,textContent:''};
+    
+    if(file.size<2*1024*1024){
+      const reader=new FileReader();
+      reader.onload=ev=>{
+        try{
+          const txt=ev.target.result;
+          obj.textContent=typeof txt==='string'?txt.slice(0,500):'';
+          renderAttachments();
+          render();
+          updateSend();
+        }catch{}
+      };
+      try{reader.readAsText(file);}catch{}
+    }
+    attachments.push(obj);
+  });
+  fileInput.value='';
+  renderAttachments();
+  updateSend();
+};
+
 let isRecording=false,recognition=null;
-function toggleVoice(){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){alert('Voice not supported. Use Chrome + HTTPS.');return;}if(isRecording){recognition.stop();return;}recognition=new SR();recognition.lang='en-US';recognition.interimResults=true;recognition.continuous=false;recognition.onstart=()=>{isRecording=true;voiceBtn.style.background='#ff3b30';voiceBtn.innerHTML='<span style="width:12px;height:12px;background:white;border-radius:50%;display:inline-block;animation:pulse 1s infinite"></span>';};recognition.onend=()=>{isRecording=false;voiceBtn.style.background='#1a1a1a';voiceBtn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';updateSend();};recognition.onresult=(e)=>{let txt='';for(let i=0;i<e.results.length;i++)txt+=e.results[i][0].transcript;input.value=txt;updateSend();input.style.height='auto';input.style.height=Math.min(input.scrollHeight,120)+'px';};recognition.onerror=(e)=>{isRecording=false;voiceBtn.style.background='#1a1a1a';voiceBtn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';alert('Mic error: '+e.error);};try{recognition.start();}catch{alert('Allow mic permission');}}voiceBtn.onclick=toggleVoice;
-async function send(){const content=input.value.trim();if((!content&&!attachments.length))return;const userFiles=[...attachments];const userMsg={role:'user',content:content||'',files:userFiles,id:Date.now()};messages.push(userMsg);input.value='';attachments=[];renderAttachments();render();input.style.height='auto';updateSend();const loadingMsg={role:'assistant',content:'...',id:'loading'};messages.push(loadingMsg);render();try{let finalContent=content||'';if(userFiles.length){finalContent+="\n\n";userFiles.forEach(f=>{if(f.textContent){finalContent+=`[File: ${f.name}]\n${f.textContent.slice(0,500)}\n\n`;}});}const hasClippy=content.toLowerCase().includes('clippy');const history=messages.filter(m=>m.id!=='loading').slice(-8).map(m=>({role:m.role,content:String(m.content||'').slice(0,500)}));const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[...history,{role:'user',content:finalContent}],mode:hasClippy?'work':'casual',use_db:hasClippy,businessId:'B1'})});const data=await res.json();console.log('API',data);if(!res.ok){const err=data?.error?.message||(typeof data?.error==='string'?data.error:JSON.stringify(data).slice(0,500));throw new Error(err);}let reply=data.reply;if(!reply){if(data.error)throw new Error(typeof data.error==='string'?data.error:JSON.stringify(data.error));throw new Error('No reply');}messages=messages.filter(m=>m.id!=='loading');messages.push({role:'assistant',content:reply,id:Date.now()+1});}catch(e){console.error(e);messages=messages.filter(m=>m.id!=='loading');messages.push({role:'assistant',content:'Error: '+e.message,id:Date.now()+1});}render();}
+
+function toggleVoice(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){alert('Voice not supported. Use Chrome + HTTPS.');return;}
+  if(isRecording){recognition.stop();return;}
+  
+  recognition=new SR();
+  recognition.lang='en-US';
+  recognition.interimResults=true;
+  recognition.continuous=false;
+  
+  recognition.onstart=()=>{
+    isRecording=true;
+    voiceBtn.style.background='#ff3b30';
+    voiceBtn.innerHTML='<span style="width:12px;height:12px;background:white;border-radius:50%;display:inline-block;animation:pulse 1s infinite"></span>';
+  };
+  
+  recognition.onend=()=>{
+    isRecording=false;
+    voiceBtn.style.background='#1a1a1a';
+    voiceBtn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';
+    updateSend();
+  };
+  
+  recognition.onresult=(e)=>{
+    let txt='';
+    for(let i=0;i<e.results.length;i++)txt+=e.results[i][0].transcript;
+    input.value=txt;
+    updateSend();
+    input.style.height='auto';
+    input.style.height=Math.min(input.scrollHeight,120)+'px';
+  };
+  
+  recognition.onerror=(e)=>{
+    isRecording=false;
+    voiceBtn.style.background='#1a1a1a';
+    voiceBtn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';
+    alert('Mic error: '+e.error);
+  };
+  
+  try{recognition.start();}catch{alert('Allow mic permission');}
+}
+
+voiceBtn.onclick=toggleVoice;
+
+async function send(){
+  const content=input.value.trim();
+  if(!content&&!attachments.length)return;
+  
+  const userFiles=[...attachments];
+  const userMsg={role:'user',content:content||'',files:userFiles,id:Date.now()};
+  messages.push(userMsg);
+  
+  input.value='';
+  attachments=[];
+  renderAttachments();
+  render();
+  input.style.height='auto';
+  updateSend();
+  
+  const loadingMsg={role:'assistant',content:'...',id:'loading'};
+  messages.push(loadingMsg);
+  render();
+  
+  try{
+    let finalContent=content||'';
+    if(userFiles.length){
+      finalContent+="\n\n";
+      userFiles.forEach(f=>{
+        if(f.textContent){
+          finalContent+=`[File: ${f.name}]\n${f.textContent.slice(0,500)}\n\n`;
+        }
+      });
+    }
+    
+    const isWorkMode=content.toLowerCase().includes('clippy') || content.toLowerCase().includes('task') || content.toLowerCase().includes('remind');
+    const history=messages.filter(m=>m.id!=='loading').slice(-8).map(m=>({role:m.role,content:String(m.content||'').slice(0,500)}));
+    
+    const res=await fetch('/api/chat',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        messages:[...history,{role:'user',content:finalContent}],
+        mode: isWorkMode ? 'work' : 'casual',
+        use_db: isWorkMode,
+        businessId:'B1'
+      })
+    });
+    
+    const data=await res.json();
+    if(!res.ok){
+      const err=data?.error?.message||(typeof data?.error==='string'?data.error:JSON.stringify(data).slice(0,500));
+      throw new Error(err);
+    }
+    
+    let reply=data.reply;
+    if(!reply){
+      if(data.error)throw new Error(typeof data.error==='string'?data.error:JSON.stringify(data.error));
+      throw new Error('No reply');
+    }
+    
+    messages=messages.filter(m=>m.id!=='loading');
+    messages.push({role:'assistant',content:reply,id:Date.now()+1});
+  }catch(e){
+    console.error(e);
+    messages=messages.filter(m=>m.id!=='loading');
+    messages.push({role:'assistant',content:'Error: '+e.message,id:Date.now()+1});
+  }
+  render();
+}
+
 sendBtn.onclick=send;
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
 render();
