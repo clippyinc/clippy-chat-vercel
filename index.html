@@ -274,7 +274,6 @@ async function send() {
     try {
       data = JSON.parse(rawText);
     } catch {
-      // Kapag hindi JSON (halimbawa plain text error or HTML)
       throw new Error(rawText || `Server returned status ${res.status}`);
     }
     
