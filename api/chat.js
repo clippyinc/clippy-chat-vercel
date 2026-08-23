@@ -107,10 +107,42 @@ export default async function handler(req, res) {
     let aiResult = null, lastErr = "";
 
     if (groqKey) {
-const models = [
-  "llama-3.3-70b-versatile",
-  "llama-3.1-8b-instant"
-];
+      // Pinakabagong active Groq models
+      const models = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-70b-versatile",
+        "llama-3.1-8b-instant"
+      ];
+
+      for (const model of models) {
+        try {
+          const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: { 
+              "Content-Type": "application/json", 
+              Authorization: `Bearer ${groqKey}` 
+            },
+            body: JSON.stringify({
+              model,
+              messages: finalMessages,
+              temperature: 0.7,
+              max_tokens: 1000,
+              response_format: { type: "json_object" }
+            })
+          });
+
+          const d = await r.json();
+          if (r.ok && d.choices?.[0]?.message?.content) {
+            aiResult = d.choices[0].message.content;
+            break; // Kapag may gumanang model, lalabas na sa loop
+          } else {
+            lastErr = d?.error?.message || `Groq error status: ${r.status}`;
+          }
+        } catch (e) {
+          lastErr = e.message;
+        }
+      }
+    }
       for (const model of models) {
         try {
           const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
