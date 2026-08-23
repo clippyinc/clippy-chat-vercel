@@ -148,7 +148,8 @@ export default async function handler(req, res) {
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${groqKey}` },
-          body: JSON.stringify({ model: "llama-3.1-8b-instant", messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
+          body: JSON.stringify({ model: "llama-3.1-8b-instant",
+        "llama-3.3-70b-versatile", messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
         });
         const data = await response.json();
         if (response.ok) reply = data.choices?.[0]?.message?.content;
