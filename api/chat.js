@@ -76,20 +76,12 @@ export default async function handler(req, res) {
     if (supabaseUrl && supabaseKey) {
       try {
         const [taskRes, bizRes, memRes, schedRes] = await Promise.all([
-          // 1. Task query: select=* para maiwasan ang column mismatch errors
           supabaseGet(`task?business_id=eq.${encodeURIComponent(businessId)}&select=*&order=created_at.desc&limit=20`),
-          
-          // 2. Business Data query: gamitin ang totoong columns (metric, value, key, name)
           supabaseGet(`business_data?select=*&limit=50`),
-          
-          // 3. Memories query
           supabaseGet(`memories?business_id=eq.${encodeURIComponent(businessId)}&select=id,content,role,created_at&order=created_at.desc&limit=100`),
-          
-          // 4. Schedule query: subukan ang 'schedule' at 'schedules'
           supabaseGet(`schedule?business_id=eq.${encodeURIComponent(businessId)}&select=*&limit=20`)
         ]);
 
-        // TASKS PARSING
         if (taskRes.ok) {
           diagnostics.tables.tasks = "ok";
           const tasks = Array.isArray(taskRes.data) ? taskRes.data : [];
@@ -100,7 +92,6 @@ export default async function handler(req, res) {
           diagnostics.tables.tasks = `error_${taskRes.status}`;
         }
 
-        // BUSINESS DATA PARSING
         if (bizRes.ok) {
           diagnostics.tables.businessData = "ok";
           const biz = Array.isArray(bizRes.data) ? bizRes.data : [];
@@ -111,7 +102,6 @@ export default async function handler(req, res) {
           diagnostics.tables.businessData = `error_${bizRes.status}`;
         }
 
-        // MEMORIES PARSING
         if (memRes.ok) {
           diagnostics.tables.memories = "ok";
           const memories = Array.isArray(memRes.data) ? memRes.data : [];
@@ -122,7 +112,6 @@ export default async function handler(req, res) {
           diagnostics.tables.memories = `error_${memRes.status}`;
         }
 
-        // SCHEDULE PARSING
         if (schedRes.ok) {
           diagnostics.tables.schedules = "ok";
           const schedules = Array.isArray(schedRes.data) ? schedRes.data : [];
@@ -138,24 +127,39 @@ export default async function handler(req, res) {
       }
     }
 
-    // AI INFERENCE & FALLBACKS
     const systemPrompt = `You are Clippy, Gelo's long-term AI partner from Marilao, PH. Current Date/Time: ${localDateTime}. Keep responses clean, direct, and warm. Context:\n${contextData.tasks}${contextData.businessData}${contextData.schedule}${contextData.memories}`;
     const finalMessages = [{ role: "system", content: systemPrompt }, ...cleanHistory];
 
     let reply = null;
+
+    // GROQ API CALL FIX
     if (groqKey) {
-      try {
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${groqKey}` },
-          body: JSON.stringify({ model: "llama-3.1-8b-instant",
-        "llama-3.3-70b-versatile", messages: finalMessages, temperature: 0.7, max_tokens: 1200 })
-        });
-        const data = await response.json();
-        if (response.ok) reply = data.choices?.[0]?.message?.content;
-      } catch (e) { console.error("Groq error:", e); }
+      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+      
+      for (const model of groqModels) {
+        try {
+          const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${groqKey}` },
+            body: JSON.stringify({ 
+              model: model, 
+              messages: finalMessages, 
+              temperature: 0.7, 
+              max_tokens: 1200 
+            })
+          });
+          const data = await response.json();
+          if (response.ok && data.choices?.[0]?.message?.content) {
+            reply = data.choices[0].message.content;
+            break;
+          }
+        } catch (e) { 
+          console.error(`Groq error for ${model}:`, e); 
+        }
+      }
     }
 
+    // OPENAI FALLBACK
     if (!reply && openaiKey) {
       try {
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -172,7 +176,6 @@ export default async function handler(req, res) {
 
     reply = String(reply).replace(/[\*#_`]/g, "").trim();
 
-    // WRITE LOGS
     if (supabaseUrl && supabaseKey) {
       supabaseInsert("messages", [
         { business_id: businessId, content: lastUserQ.slice(0, 1000), role: "user" },
