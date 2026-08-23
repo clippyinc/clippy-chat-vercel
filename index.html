@@ -268,23 +268,29 @@ async function send() {
       })
     });
     
-    // SAFE PARSING: Miiwasan nito ang JSON crash kapag may Vercel Server Error
     const rawText = await res.text();
     let data;
+    
     try {
       data = JSON.parse(rawText);
-    } catch (e) {
-      throw new Error(`Server Error (${res.status}): ${rawText.slice(0, 80)}...`);
+    } catch {
+      // Kapag hindi JSON (halimbawa plain text error or HTML)
+      throw new Error(rawText || `Server returned status ${res.status}`);
     }
     
     if (!res.ok) {
-      const err = data?.error?.message || (typeof data?.error === 'string' ? data.error : JSON.stringify(data).slice(0, 500));
-      throw new Error(err);
+      const errMsg = typeof data?.error === 'string' 
+        ? data.error 
+        : data?.error?.message || JSON.stringify(data);
+      throw new Error(errMsg);
     }
     
     let reply = data.reply;
     if (!reply) {
-      if (data.error) throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+      if (data.error) {
+        const errMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
+        throw new Error(errMsg);
+      }
       throw new Error('No reply from AI');
     }
     
@@ -293,7 +299,8 @@ async function send() {
   } catch (e) {
     console.error(e);
     messages = messages.filter(m => m.id !== 'loading');
-    messages.push({ role: 'assistant', content: 'Error: ' + e.message, id: Date.now() + 1 });
+    const errorText = typeof e === 'string' ? e : e?.message || 'Unknown error occurred';
+    messages.push({ role: 'assistant', content: 'Error: ' + errorText, id: Date.now() + 1 });
   }
   render();
 }
