@@ -224,68 +224,76 @@ function toggleVoice(){
 
 voiceBtn.onclick=toggleVoice;
 
-async function send(){
-  const content=input.value.trim();
-  if(!content&&!attachments.length)return;
+async function send() {
+  const content = input.value.trim();
+  if (!content && !attachments.length) return;
   
-  const userFiles=[...attachments];
-  const userMsg={role:'user',content:content||'',files:userFiles,id:Date.now()};
+  const userFiles = [...attachments];
+  const userMsg = { role: 'user', content: content || '', files: userFiles, id: Date.now() };
   messages.push(userMsg);
   
-  input.value='';
-  attachments=[];
+  input.value = '';
+  attachments = [];
   renderAttachments();
   render();
-  input.style.height='auto';
+  input.style.height = 'auto';
   updateSend();
   
-  const loadingMsg={role:'assistant',content:'...',id:'loading'};
+  const loadingMsg = { role: 'assistant', content: '...', id: 'loading' };
   messages.push(loadingMsg);
   render();
   
-  try{
-    let finalContent=content||'';
-    if(userFiles.length){
-      finalContent+="\n\n";
-      userFiles.forEach(f=>{
-        if(f.textContent){
-          finalContent+=`[File: ${f.name}]\n${f.textContent.slice(0,500)}\n\n`;
+  try {
+    let finalContent = content || '';
+    if (userFiles.length) {
+      finalContent += "\n\n";
+      userFiles.forEach(f => {
+        if (f.textContent) {
+          finalContent += `[File: ${f.name}]\n${f.textContent.slice(0, 500)}\n\n`;
         }
       });
     }
     
-    const isWorkMode=content.toLowerCase().includes('clippy') || content.toLowerCase().includes('task') || content.toLowerCase().includes('remind');
-    const history=messages.filter(m=>m.id!=='loading').slice(-8).map(m=>({role:m.role,content:String(m.content||'').slice(0,500)}));
+    const isWorkMode = content.toLowerCase().includes('clippy') || content.toLowerCase().includes('task') || content.toLowerCase().includes('remind');
+    const history = messages.filter(m => m.id !== 'loading').slice(-8).map(m => ({ role: m.role, content: String(m.content || '').slice(0, 500) }));
     
-    const res=await fetch('/api/chat',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        messages:[...history,{role:'user',content:finalContent}],
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [...history, { role: 'user', content: finalContent }],
         mode: isWorkMode ? 'work' : 'casual',
         use_db: isWorkMode,
-        businessId:'B1'
+        businessId: 'B1'
       })
     });
     
-    const data=await res.json();
-    if(!res.ok){
-      const err=data?.error?.message||(typeof data?.error==='string'?data.error:JSON.stringify(data).slice(0,500));
+    // SAFE PARSING: Miiwasan nito ang JSON crash kapag may Vercel Server Error
+    const rawText = await res.text();
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch (e) {
+      throw new Error(`Server Error (${res.status}): ${rawText.slice(0, 80)}...`);
+    }
+    
+    if (!res.ok) {
+      const err = data?.error?.message || (typeof data?.error === 'string' ? data.error : JSON.stringify(data).slice(0, 500));
       throw new Error(err);
     }
     
-    let reply=data.reply;
-    if(!reply){
-      if(data.error)throw new Error(typeof data.error==='string'?data.error:JSON.stringify(data.error));
-      throw new Error('No reply');
+    let reply = data.reply;
+    if (!reply) {
+      if (data.error) throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+      throw new Error('No reply from AI');
     }
     
-    messages=messages.filter(m=>m.id!=='loading');
-    messages.push({role:'assistant',content:reply,id:Date.now()+1});
-  }catch(e){
+    messages = messages.filter(m => m.id !== 'loading');
+    messages.push({ role: 'assistant', content: reply, id: Date.now() + 1 });
+  } catch (e) {
     console.error(e);
-    messages=messages.filter(m=>m.id!=='loading');
-    messages.push({role:'assistant',content:'Error: '+e.message,id:Date.now()+1});
+    messages = messages.filter(m => m.id !== 'loading');
+    messages.push({ role: 'assistant', content: 'Error: ' + e.message, id: Date.now() + 1 });
   }
   render();
 }
