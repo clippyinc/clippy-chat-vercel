@@ -16,11 +16,13 @@ export default async function handler(req, res) {
     const supabaseUrl = (process.env.SUPABASE_URL || "").trim();
     const supabaseKey = (process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
-    if (!geminiKey &&!groqKey) return res.status(200).json({
-      reply: "1. Summary: No API key\n2. Fix: Add GEMINI_API_KEY (AQ... key mo) + GROQ_API_KEY sa Vercel > Settings > Env Vars\n3. Get key: aistudio.google.com"
-    });
+    if (!geminiKey &&!groqKey) {
+      return res.status(200).json({
+        reply: "1. Summary: No API key\n2. Fix: Add GEMINI_API_KEY (AQ... key mo) + GROQ_API_KEY sa Vercel > Settings > Env Vars\n3. Get key: aistudio.google.com/app/apikey"
+      });
+    }
 
-    // TOKEN KILLER FIXED - 8 msgs x 500 chars only
+    // TOKEN KILLER FIXED - 8 msgs x 500 chars only = 1900 tokens
     const cleanHistory = messages.filter(m => m && m.role && m.role!== "system").slice(-8).map(m => ({ role: m.role, content: String(m.content || "").slice(0, 500) }));
     const lastUserQ = [...cleanHistory].reverse().find(m => m.role === "user")?.content?.trim() || "";
     if (!lastUserQ) return res.status(400).json({ error: "No user message" });
@@ -28,7 +30,6 @@ export default async function handler(req, res) {
     const now = new Date();
     const localDateTime = now.toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "full", timeStyle: "long" });
 
-    // Supabase helper - polished
     function supabaseHeaders(json = false) {
       const h = { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` };
       if (json) { h["Content-Type"] = "application/json"; h["Prefer"] = "return=representation"; }
@@ -77,7 +78,6 @@ export default async function handler(req, res) {
       } catch {}
     }
 
-    // DETAILED OUTLINE + NUMBERS - MANDATORY
     const personalities = {
       casual: `You are Clippy, mirror of Gelo Cabornay - Valenzuela, 1pm shift, 13yrs with Happy, Happy's Place owner, dark #0a0a0a.
 MANDATORY FORMAT - DETAILED OUTLINE + NUMBERS (400-600 tokens):
@@ -121,7 +121,6 @@ Respond ONLY valid JSON: {"reply":"outline formatted reply with![desc](url) if i
         for (const m of cleanHistory) {
           contents.push({ role: m.role === "assistant"? "model" : "user", parts: [{ text: m.content }] });
         }
-        // Vision support for AQ key
         if (images.length > 0) {
           const last = contents[contents.length - 1];
           for (const img of images.slice(0, 3)) {
@@ -142,8 +141,9 @@ Respond ONLY valid JSON: {"reply":"outline formatted reply with![desc](url) if i
           console.log("Gemini AQ success");
         } else {
           lastErr = d?.error?.message || `Gemini ${r.status}: ${JSON.stringify(d).slice(0, 300)}`;
+          console.error("Gemini fail:", lastErr);
         }
-      } catch (e) { lastErr = e.message; }
+      } catch (e) { lastErr = e.message; console.error("Gemini exception:", e); }
     }
 
     // 2. BACKUP: GROQ (2 working models only)
