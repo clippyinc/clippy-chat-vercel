@@ -17,12 +17,10 @@ export default async function handler(req, res) {
     const supabaseKey = (process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
     if (!geminiKey &&!groqKey) {
-      return res.status(200).json({
-        reply: "1. Summary: No API key\n2. Fix: Add GEMINI_API_KEY (AQ... key mo) + GROQ_API_KEY sa Vercel > Settings > Env Vars\n3. Get key: aistudio.google.com/app/apikey"
-      });
+      return res.status(200).json({ reply: "1. Summary: No API key\n2. Fix: Add GEMINI_API_KEY (AQ...) + GROQ_API_KEY sa Vercel > Settings > Env Vars" });
     }
 
-    // TOKEN KILLER FIXED - 8 msgs x 500 chars only = 1900 tokens
+    // TOKEN SAFE - 8 msgs x 500 chars
     const cleanHistory = messages.filter(m => m && m.role && m.role!== "system").slice(-8).map(m => ({ role: m.role, content: String(m.content || "").slice(0, 500) }));
     const lastUserQ = [...cleanHistory].reverse().find(m => m.role === "user")?.content?.trim() || "";
     if (!lastUserQ) return res.status(400).json({ error: "No user message" });
@@ -46,82 +44,65 @@ export default async function handler(req, res) {
     const supabaseGet = (t, q) => supabaseRequest("GET", t, q);
     const supabaseInsert = (t, p) => supabaseRequest("POST", t, "", p);
 
-    let contextData = { tasks: "", schedules: "", memories: "", businessData: "", reminders: "" };
+    let contextData = { tasks: "", schedules: "", memories: "", businessData: "" };
     if (use_db && supabaseUrl && supabaseKey) {
       try {
-        const reminderMatch = lastUserQ.match(/remind me to (.+) (tomorrow|today|at \d+|on.+)/i);
-        if (reminderMatch) {
-          const title = reminderMatch[1].trim();
-          await supabaseInsert("schedules", { business_id: businessId, title: title.slice(0, 500), scheduled_at: new Date(Date.now() + 86400000).toISOString(), status: "pending" });
-          contextData.reminders = `\n\nNEW REMINDER SET: ${title}`;
-        }
         const [taskRes, scheduleRes, memoryRes] = await Promise.all([
-          supabaseGet("tasks", `?business_id=eq.${encodeURIComponent(businessId)}&is_done=eq.false&select=title,due_at&order=created_at.desc&limit=15`),
-          supabaseGet("schedules", `?business_id=eq.${encodeURIComponent(businessId)}&select=title,scheduled_at,status&order=scheduled_at.asc&limit=15`),
-          supabaseGet("memories", `?business_id=eq.${encodeURIComponent(businessId)}&select=content,role,created_at&order=created_at.desc&limit=60`)
+          supabaseGet("tasks", `?business_id=eq.${encodeURIComponent(businessId)}&is_done=eq.false&select=title,due_at&limit=15`),
+          supabaseGet("schedules", `?business_id=eq.${encodeURIComponent(businessId)}&select=title,scheduled_at&limit=15`),
+          supabaseGet("memories", `?business_id=eq.${encodeURIComponent(businessId)}&select=content,role&order=created_at.desc&limit=60`)
         ]);
-        if (taskRes.ok && taskRes.data?.length) contextData.tasks = "\n\nTASKS:\n" + taskRes.data.map(t => `- ${t.title} | ${t.due_at || 'N/A'}`).join("\n").slice(0, 600);
-        if (scheduleRes.ok && scheduleRes.data?.length) contextData.schedules = "\n\nSCHEDULES:\n" + scheduleRes.data.map(s => `- ${s.title} | ${s.scheduled_at}`).join("\n").slice(0, 600);
+        if (taskRes.ok && taskRes.data?.length) contextData.tasks = "\nTASKS:\n" + taskRes.data.map(t => `- ${t.title}`).join("\n").slice(0, 500);
+        if (scheduleRes.ok && scheduleRes.data?.length) contextData.schedules = "\nSCHEDULES:\n" + scheduleRes.data.map(s => `- ${s.title}`).join("\n").slice(0, 500);
         if (memoryRes.ok && memoryRes.data?.length) {
           const qWords = lastUserQ.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
-          const scored = memoryRes.data.map(m => { let score = 0; const c = String(m.content || '').toLowerCase(); qWords.forEach(w => { if (c.includes(w)) score += 2; }); return {...m, _score: score }; }).sort((a, b) => b._score - a._score).slice(0, 4);
-          contextData.memories = "\n\nMEMORIES:\n" + scored.map(m => `[${m.role}] ${m.content}`).join("\n").slice(0, 600);
+          const scored = memoryRes.data.map(m => { let s = 0; const c = String(m.content || '').toLowerCase(); qWords.forEach(w => { if (c.includes(w)) s += 2; }); return {...m, _score: s }; }).sort((a, b) => b._score - a._score).slice(0, 4);
+          contextData.memories = "\nMEMORIES:\n" + scored.map(m => `[${m.role}] ${m.content}`).join("\n").slice(0, 500);
         }
-      } catch (e) { console.error(e); }
+      } catch {}
     }
 
     let webContext = ""; let webImages = [];
-    if (tavilyKey && /weather|news|latest|current|today|price|search|who is|what is|nba|score|stock|usd|php/i.test(lastUserQ)) {
+    if (tavilyKey && /weather|news|latest|today|price|search|who is|what is|nba|score|stock/i.test(lastUserQ)) {
       try {
         const r = await fetch("https://api.tavily.com/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: tavilyKey, query: lastUserQ, max_results: 3, search_depth: "basic", include_images: true }) });
-        const data = await r.json(); if (r.ok && data.results) { webContext = "\n\nWEB:\n" + data.results.map(x => `- ${x.title}: ${String(x.content || '').slice(0, 300)}`).join("\n").slice(0, 800); if (data.images) webImages = data.images.slice(0, 2); }
+        const data = await r.json(); if (r.ok && data.results) { webContext = "\nWEB:\n" + data.results.map(x => `- ${x.title}: ${String(x.content || '').slice(0, 300)}`).join("\n").slice(0, 700); if (data.images) webImages = data.images.slice(0, 2); }
       } catch {}
     }
 
     const personalities = {
-      casual: `You are Clippy, mirror of Gelo Cabornay - Valenzuela, 1pm shift, 13yrs with Happy, Happy's Place owner, dark #0a0a0a.
-MANDATORY FORMAT - DETAILED OUTLINE + NUMBERS (400-600 tokens):
-1. Quick Answer (1-2 lines direct)
-2. Facts/Data:
-   2.1 Actual numbers
-   2.2 Target / Last Year if given
-   2.3 Math: (last-actual)/last*100 = %
-3. Context/Nuance
+      casual: `You are Clippy, mirror of Gelo Cabornay - Valenzuela, 1pm shift, Happy's Place owner.
+MANDATORY FORMAT:
+1. Quick Answer
+2. Facts/Data: 2.1 Actual, 2.2 Target/Last Year, 2.3 Math: (last-actual)/last*100 = %
+3. Context
 4. My Take (Taglish barkada, bud/buddy 30% only)
-RULES: If file/image attached: extract numbers. If missing data: ASK clarifying question, don't hallucinate. Bullets > essay.`,
-      work: `You are Clippy, work mode - store analyst for Happy's Place. Professional friendly.
-FORMAT:
-1. Summary: ADS, Target, % vs Target
-2. Breakdown:
-   2.1 Total: actual vs last year + formula
-   2.2 In-Store / Delivery split if given
-   2.3 Math: show calculation
-3. Status + Next Action
-Ask if missing actual ADS, don't guess. Boss/bossing 30% only when important.`
+RULES: If file/image attached: extract numbers. If missing: ASK, don't hallucinate.`,
+      work: `You are Clippy, work mode - store analyst.
+1. Summary: ADS, Target, %
+2. Breakdown: 2.1 Total, 2.2 In-Store/Delivery, 2.3 Formula
+3. Status + Next Action`
     };
 
     const systemPrompt = `${personalities[mode] || personalities.casual}
-TIME: ${localDateTime}
-Business: ${businessId} Mode:${mode} use_db:${use_db}
-${use_db? `DB:\n${contextData.reminders}\n${contextData.tasks}\n${contextData.schedules}\n${contextData.memories}\n` : "No DB - casual"}
-${webContext? `WEB:\n${webContext}` : ""}
-${webImages.length? `\nIMAGES:\n${webImages.map(url => `![image](${url})`).join("\n")}` : ""}
-Respond ONLY valid JSON: {"reply":"outline formatted reply with![desc](url) if images","actions":[]} Actions: memory/task/schedule only when worth storing.`;
+TIME: ${localDateTime} | Business: ${businessId} Mode:${mode}
+${use_db? `DB:${contextData.tasks}${contextData.schedules}${contextData.memories}` : "No DB"}
+${webContext}
+${webImages.length? `\nIMAGES:\n${webImages.map(u => `![image](${u})`).join("\n")}` : ""}
+Respond JSON ONLY: {"reply":"outline reply","actions":[]}`;
 
     let aiResult = null, lastErr = "";
 
-    // 1. PRIMARY: GEMINI AQ... (1M tokens + vision)
+    // 1. PRIMARY: GEMINI AQ... (1M tokens + vision) - SUPPORTS AQ... format!
     if (geminiKey) {
       try {
-        console.log("Trying Gemini primary AQ...");
+        console.log("Trying Gemini AQ primary...");
         const contents = [
           { role: "user", parts: [{ text: systemPrompt }] },
-          { role: "model", parts: [{ text: "Gets bud! Outline + numbers + ask if unsure. Ready!" }] }
+          { role: "model", parts: [{ text: "Gets bud! Outline + numbers ready!" }] }
         ];
-        for (const m of cleanHistory) {
-          contents.push({ role: m.role === "assistant"? "model" : "user", parts: [{ text: m.content }] });
-        }
-        if (images.length > 0) {
+        for (const m of cleanHistory) contents.push({ role: m.role === "assistant"? "model" : "user", parts: [{ text: m.content }] });
+        if (images.length) {
           const last = contents[contents.length - 1];
           for (const img of images.slice(0, 3)) {
             if (img.dataUrl) {
@@ -138,32 +119,42 @@ Respond ONLY valid JSON: {"reply":"outline formatted reply with![desc](url) if i
         const d = await r.json();
         if (r.ok && d.candidates?.[0]?.content?.parts?.[0]?.text) {
           aiResult = d.candidates[0].content.parts[0].text;
-          console.log("Gemini AQ success");
+          console.log("Gemini AQ success!");
         } else {
           lastErr = d?.error?.message || `Gemini ${r.status}: ${JSON.stringify(d).slice(0, 300)}`;
           console.error("Gemini fail:", lastErr);
         }
-      } catch (e) { lastErr = e.message; console.error("Gemini exception:", e); }
+      } catch (e) { lastErr = e.message; }
     }
 
-    // 2. BACKUP: GROQ (2 working models only)
+    // 2. BACKUP: GROQ - ONLY WORKING MODELS (FIXED!)
     if (!aiResult && groqKey) {
-      console.log("Falling back to Groq backup");
-      for (const model of ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]) {
+      console.log("Falling back to Groq backup - working models only");
+      const workingModels = [
+        "llama-3.3-70b-versatile",
+        "openai/gpt-oss-20b"
+      ];
+      for (const model of workingModels) {
         try {
+          console.log("Trying Groq:", model);
           const finalMessages = [{ role: "system", content: systemPrompt },...cleanHistory];
           const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${groqKey}` },
             body: JSON.stringify({ model, messages: finalMessages, temperature: 0.65, max_tokens: 900, response_format: { type: "json_object" } })
           });
           const d = await r.json();
-          if (r.ok && d.choices?.[0]?.message?.content) { aiResult = d.choices[0].message.content; console.log("Groq backup success:", model); break; }
-          lastErr = d?.error?.message || `Groq ${r.status}`;
+          if (r.ok && d.choices?.[0]?.message?.content) {
+            aiResult = d.choices[0].message.content;
+            console.log("Groq backup success:", model);
+            break;
+          }
+          lastErr = d?.error?.message || `Groq ${r.status}: ${JSON.stringify(d).slice(0, 300)}`;
+          console.error("Groq fail:", model, lastErr);
         } catch (e) { lastErr = e.message; }
       }
     }
 
-    if (!aiResult) return res.status(200).json({ reply: `1. Summary: AI failed\n2. Error: ${lastErr}\n3. Fix: Check Vercel env GEMINI_API_KEY (AQ...) + GROQ_API_KEY`, error: lastErr, images: webImages });
+    if (!aiResult) return res.status(200).json({ reply: `1. Summary: AI failed\n2. Error: ${lastErr}\n3. Fix: Check Vercel env GEMINI_API_KEY (AQ...) + GROQ_API_KEY - make sure AQ key valid and Groq key has credits`, error: lastErr, images: webImages });
 
     let parsed; try { parsed = JSON.parse(aiResult); } catch { parsed = { reply: String(aiResult).slice(0, 2000), actions: [] }; }
     let reply = (parsed.reply || "Yep bud.").trim().replace(/```[\s\S]*?```/g, "").trim();
@@ -179,7 +170,6 @@ Respond ONLY valid JSON: {"reply":"outline formatted reply with![desc](url) if i
         } catch {}
       }
     }
-    if (use_db && supabaseUrl && supabaseKey) { try { await supabaseInsert("messages", [{ business_id: businessId, content: lastUserQ.slice(0, 800), role: "user" }, { business_id: businessId, content: reply.slice(0, 800), role: "assistant" }]); } catch {} }
 
     return res.status(200).json({ reply, mode, use_db, images: webImages, provider: geminiKey && aiResult? "gemini" : "groq" });
   } catch (e) {
