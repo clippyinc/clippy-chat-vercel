@@ -11,17 +11,12 @@ header{position:fixed;top:0;left:0;right:0;height:56px;background:#0a0a0a;border
 header span{font-weight:800;font-size:18px;letter-spacing:2px;font-family:monospace}
 #chat{flex:1;overflow-y:auto;padding:72px 0 140px}
 .inner{max-width:760px;margin:0 auto;padding:0 16px;display:flex;flex-direction:column;gap:24px}
-.bubble{max-width:85%;border-radius:18px;padding:12px 16px;font-size:15px;line-height:1.6;word-break:break-word;border:1px solid #212121;background:#171717;color:#ececec}
+.bubble{max-width:85%;border-radius:18px;padding:12px 16px;font-size:15px;line-height:1.6;word-break:break-word;border:1px solid #212121;background:#171717}
 .bubble img{max-width:100%;border-radius:12px;margin:10px 0;display:block}
 .bubble video{max-width:100%;border-radius:12px;margin:10px 0;display:block}
 .bubble a{color:#8ab4f8;text-decoration:underline;word-break:break-all}
-.user{align-self:flex-end;background:#2f2f2f;border-color:#3a3a3a;color:#fff}
-.assistant{align-self:flex-start;background:#171717}
-.files{display:flex;flex-wrap:wrap;gap:8px;max-width:85%}
-.file{display:flex;align-items:center;gap:8px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:8px 12px;text-decoration:none}
-.file .ext{font-size:11px;background:#212121;padding:3px 6px;border-radius:6px;color:#8e8e8e;font-weight:600}
-.file .name{font-size:13px;color:#ececec;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.file .size{font-size:11px;color:#6e6e6e}
+.user{align-self:flex-end;background:#2f2f2f;border-color:#3a3a3a}
+.assistant{align-self:flex-start}
 #bottom{position:fixed;bottom:0;left:0;right:0;background:#0a0a0a;border-top:1px solid #171717;padding:12px 0 16px;z-index:20}
 .bottom-inner{max-width:760px;margin:0 auto;padding:0 16px}
 .attach-preview{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
@@ -37,24 +32,22 @@ pre.code{margin-top:10px;background:#0a0a0a;border:1px solid #212121;border-radi
 <script src="memory.js"></script>
 </head>
 <body>
-<header><span>CLIPPY</span></header>
+<header><span>CLIPPY</span><div style="position:absolute;right:16px;display:flex;gap:8px"><button id="exportBtn" style="background:#212121;border:1px solid #2a2a2a;color:#8e8e8e;border-radius:12px;padding:4px 10px;font-size:11px;cursor:pointer">EXPORT</button><button id="importBtn" style="background:#212121;border:1px solid #2a2a2a;color:#8e8e8e;border-radius:12px;padding:4px 10px;font-size:11px;cursor:pointer">IMPORT</button></div><input type="file" id="importFile" accept=".json" style="display:none"></header>
 <div id="chat"><div class="inner" id="list"></div></div>
 <div id="bottom"><div class="bottom-inner">
 <div class="attach-preview" id="attachPreview"></div>
 <div class="input-wrap">
-<input type="file" id="fileInput" multiple style="display:none">
+<input type="file" id="fileInput" multiple accept=".txt,.csv,.json,.md,image/*" style="display:none">
 <button class="icon-btn" id="attachBtn">+</button>
-<textarea id="msg" placeholder="Type a message..." rows="1"></textarea>
-<button class="icon-btn" id="voiceBtn" title="Voice"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></button>
+<textarea id="msg" placeholder="Type + attach files/images for Gemini AQ vision..." rows="1"></textarea>
+<button class="icon-btn" id="voiceBtn" title="Voice"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></button>
 <button id="send" style="display:none">↑</button>
 </div>
 </div></div>
 <script>
 const list=document.getElementById('list'),chat=document.getElementById('chat'),input=document.getElementById('msg'),sendBtn=document.getElementById('send'),voiceBtn=document.getElementById('voiceBtn'),fileInput=document.getElementById('fileInput'),attachBtn=document.getElementById('attachBtn'),attachPreview=document.getElementById('attachPreview');
-let defaultMessages=[]; let messages=(typeof Memory!=='undefined'?Memory.init(defaultMessages):defaultMessages); let attachments=[];
-
+let messages=(typeof Memory!=='undefined'?Memory.init([]):[]); let attachments=[];
 function formatSize(b){if(b<1024)return b+' B';if(b<1024*1024)return (b/1024).toFixed(1)+' KB';return (b/1024/1024).toFixed(1)+' MB';}
-
 function mdToHtml(t){
   if(!t)return '';
   let h=t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -66,246 +59,58 @@ function mdToHtml(t){
   h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
   return h.split('\n').join('<br>');
 }
-
 function render(){
-  list.innerHTML='';
-  messages.forEach(m=>{
+  list.innerHTML=''; messages.forEach(m=>{
     if(!m.content&&(!m.files||!m.files.length))return;
-    const wrap=document.createElement('div');
-    wrap.style.display='flex';
-    wrap.style.flexDirection='column';
-    wrap.style.gap='8px';
-    wrap.style.alignItems=m.role==='user'?'flex-end':'flex-start';
-    
-    const bubble=document.createElement('div');
-    bubble.className='bubble '+(m.role==='user'?'user':'assistant');
-    bubble.innerHTML=mdToHtml(m.content||'');
-    
-    if(m.files&&m.files.some(f=>f.textContent)){
-      m.files.forEach(f=>{
-        if(f.textContent){
-          const pre=document.createElement('pre');
-          pre.className='code';
-          pre.textContent=f.name+"\n\n"+f.textContent.slice(0,500);
-          bubble.appendChild(pre);
-        }
-      });
-    }
+    const wrap=document.createElement('div'); wrap.style.display='flex'; wrap.style.flexDirection='column'; wrap.style.gap='8px'; wrap.style.alignItems=m.role==='user'?'flex-end':'flex-start';
+    const bubble=document.createElement('div'); bubble.className='bubble '+(m.role==='user'?'user':'assistant'); bubble.innerHTML=mdToHtml(m.content||'');
+    if(m.files&&m.files.some(f=>f.textContent)){ m.files.forEach(f=>{ if(f.textContent){ const pre=document.createElement('pre'); pre.className='code'; pre.textContent=f.name+"\n\n"+f.textContent.slice(0,800); bubble.appendChild(pre); } }); }
     wrap.appendChild(bubble);
-    
-    if(m.files&&m.files.length){
-      const filesDiv=document.createElement('div');
-      filesDiv.className='files';
-      m.files.forEach(f=>{
-        const a=document.createElement('a');
-        a.className='file';
-        a.href=f.url;
-        a.target='_blank';
-        a.innerHTML=`<span class="ext">${f.ext}</span><span class="name">${f.name}</span><span class="size">${f.size}</span>`;
-        filesDiv.appendChild(a);
-      });
-      wrap.appendChild(filesDiv);
-    }
+    if(m.files&&m.files.length){ const filesDiv=document.createElement('div'); filesDiv.className='files'; m.files.forEach(f=>{ const a=document.createElement('a'); a.className='file'; a.href=f.url; a.target='_blank'; a.innerHTML=`<span class="ext">${f.ext}</span><span class="name">${f.name}</span><span class="size">${f.size}${f.dataUrl?' • vision':''}</span>`; filesDiv.appendChild(a); }); wrap.appendChild(filesDiv); }
     list.appendChild(wrap);
-  });
-  chat.scrollTo({top:chat.scrollHeight,behavior:'smooth'});
-  if(typeof Memory!=='undefined'){try{Memory.save(messages);}catch(e){}}
+  }); chat.scrollTo({top:chat.scrollHeight,behavior:'smooth'}); if(typeof Memory!=='undefined'){try{Memory.save(messages);}catch(e){}}
 }
-
-function renderAttachments(){
-  attachPreview.innerHTML='';
-  attachments.forEach(f=>{
-    const div=document.createElement('div');
-    div.className='attach-card';
-    div.innerHTML=`<span class="ext" style="font-size:11px;background:#212121;padding:3px 6px;border-radius:6px;color:#8e8e8e;font-weight:600">${f.ext}</span><div style="display:flex;flex-direction:column"><span style="font-size:12px">${f.name}</span><span style="font-size:11px;color:#6e6e6e">${f.size}</span></div><button data-id="${f.id}" style="background:transparent;border:0;color:#6e6e6e;cursor:pointer;font-size:16px;margin-left:8px">×</button>`;
-    attachPreview.appendChild(div);
-  });
-  attachPreview.querySelectorAll('button').forEach(btn=>{
-    btn.onclick=()=>{
-      attachments=attachments.filter(a=>a.id!==btn.dataset.id);
-      renderAttachments();
-      updateSend();
-    };
-  });
-}
-
-function updateSend(){
-  const has=input.value.trim()||attachments.length>0;
-  if(has){
-    sendBtn.style.display='flex';
-    sendBtn.classList.add('active');
-    voiceBtn.style.display='none';
-  }else{
-    sendBtn.style.display='none';
-    sendBtn.classList.remove('active');
-    voiceBtn.style.display='flex';
-  }
-}
-
-input.addEventListener('input',()=>{
-  input.style.height='auto';
-  input.style.height=Math.min(input.scrollHeight,120)+'px';
-  updateSend();
-});
-
+function renderAttachments(){ attachPreview.innerHTML=''; attachments.forEach(f=>{ const div=document.createElement('div'); div.className='attach-card'; div.innerHTML=`<span class="ext" style="font-size:11px;background:#212121;padding:3px 6px;border-radius:6px;color:#8e8e8e;font-weight:600">${f.ext}</span><div style="display:flex;flex-direction:column"><span style="font-size:12px">${f.name}</span><span style="font-size:11px;color:#6e6e6e">${f.size}${f.dataUrl?' • vision':''}</span></div><button data-id="${f.id}" style="background:transparent;border:0;color:#6e6e6e;cursor:pointer;font-size:16px;margin-left:8px">×</button>`; attachPreview.appendChild(div); }); attachPreview.querySelectorAll('button').forEach(btn=>{btn.onclick=()=>{attachments=attachments.filter(a=>a.id!==btn.dataset.id);renderAttachments();updateSend();};}); }
+function updateSend(){ const has=input.value.trim()||attachments.length>0; if(has){sendBtn.style.display='flex'; sendBtn.classList.add('active'); voiceBtn.style.display='none';}else{sendBtn.style.display='none'; sendBtn.classList.remove('active'); voiceBtn.style.display='flex';} }
+input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,120)+'px';updateSend();});
 attachBtn.onclick=()=>fileInput.click();
-
 fileInput.onchange=(e)=>{
   Array.from(e.target.files||[]).forEach(file=>{
-    const id=Date.now()+Math.random();
-    const url=URL.createObjectURL(file);
-    const ext=(file.name.split('.').pop()||'FILE').toUpperCase();
-    const size=formatSize(file.size);
-    const obj={id,name:file.name,type:file.type||ext,size,rawSize:file.size,url,ext,textContent:''};
-    
-    if(file.size<2*1024*1024){
-      const reader=new FileReader();
-      reader.onload=ev=>{
-        try{
-          const txt=ev.target.result;
-          obj.textContent=typeof txt==='string'?txt.slice(0,500):'';
-          renderAttachments();
-          render();
-          updateSend();
-        }catch{}
-      };
-      try{reader.readAsText(file);}catch{}
+    const id=Date.now()+Math.random(); const url=URL.createObjectURL(file); const ext=(file.name.split('.').pop()||'FILE').toUpperCase(); const size=formatSize(file.size);
+    const obj={id,name:file.name,type:file.type||ext,size,rawSize:file.size,url,ext,textContent:'',dataUrl:null,isImage:file.type.startsWith('image/')};
+    if(file.size<5*1024*1024){
+      if(obj.isImage){ const reader=new FileReader(); reader.onload=ev=>{obj.dataUrl=ev.target.result; obj.textContent=`[Image: ${file.name} - vision]`; renderAttachments(); render(); updateSend();}; reader.readAsDataURL(file); }
+      else { const reader=new FileReader(); reader.onload=ev=>{try{obj.textContent=String(ev.target.result).slice(0,1000); renderAttachments(); render(); updateSend();}catch{}}; reader.readAsText(file); }
     }
     attachments.push(obj);
-  });
-  fileInput.value='';
-  renderAttachments();
-  updateSend();
+  }); fileInput.value=''; renderAttachments(); updateSend();
 };
-
 let isRecording=false,recognition=null;
-
-function toggleVoice(){
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){alert('Voice not supported. Use Chrome + HTTPS.');return;}
-  if(isRecording){recognition.stop();return;}
-  
-  recognition=new SR();
-  recognition.lang='en-US';
-  recognition.interimResults=true;
-  recognition.continuous=false;
-  
-  recognition.onstart=()=>{
-    isRecording=true;
-    voiceBtn.style.background='#ff3b30';
-    voiceBtn.innerHTML='<span style="width:12px;height:12px;background:white;border-radius:50%;display:inline-block;animation:pulse 1s infinite"></span>';
-  };
-  
-  recognition.onend=()=>{
-    isRecording=false;
-    voiceBtn.style.background='#1a1a1a';
-    voiceBtn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';
-    updateSend();
-  };
-  
-  recognition.onresult=(e)=>{
-    let txt='';
-    for(let i=0;i<e.results.length;i++)txt+=e.results[i][0].transcript;
-    input.value=txt;
-    updateSend();
-    input.style.height='auto';
-    input.style.height=Math.min(input.scrollHeight,120)+'px';
-  };
-  
-  recognition.onerror=(e)=>{
-    isRecording=false;
-    voiceBtn.style.background='#1a1a1a';
-    voiceBtn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';
-    alert('Mic error: '+e.error);
-  };
-  
-  try{recognition.start();}catch{alert('Allow mic permission');}
-}
-
+function toggleVoice(){ const SR=window.SpeechRecognition||window.webkitSpeechRecognition; if(!SR){alert('Voice not supported. Use Chrome + HTTPS.');return;} if(isRecording){recognition.stop();return;} recognition=new SR(); recognition.lang='en-US'; recognition.interimResults=true; recognition.continuous=false; recognition.onstart=()=>{isRecording=true; voiceBtn.style.background='#ff3b30'; voiceBtn.innerHTML='<span style="width:12px;height:12px;background:white;border-radius:50%;display:inline-block;animation:pulse 1s infinite"></span>';}; recognition.onend=()=>{isRecording=false; voiceBtn.style.background='#1a1a1a'; voiceBtn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>'; updateSend();}; recognition.onresult=(e)=>{let txt=''; for(let i=0;i<e.results.length;i++)txt+=e.results[i][0].transcript; input.value=txt; updateSend(); input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,120)+'px';}; recognition.onerror=(e)=>{isRecording=false; voiceBtn.style.background='#1a1a1a'; alert('Mic error: '+e.error);}; try{recognition.start();}catch{alert('Allow mic permission');} }
 voiceBtn.onclick=toggleVoice;
-
-async function send() {
-  const content = input.value.trim();
-  if (!content && !attachments.length) return;
-  
-  const userFiles = [...attachments];
-  const userMsg = { role: 'user', content: content || '', files: userFiles, id: Date.now() };
-  messages.push(userMsg);
-  
-  input.value = '';
-  attachments = [];
-  renderAttachments();
-  render();
-  input.style.height = 'auto';
-  updateSend();
-  
-  const loadingMsg = { role: 'assistant', content: '...', id: 'loading' };
-  messages.push(loadingMsg);
-  render();
-  
-  try {
-    let finalContent = content || '';
-    if (userFiles.length) {
-      finalContent += "\n\n";
-      userFiles.forEach(f => {
-        if (f.textContent) {
-          finalContent += `[File: ${f.name}]\n${f.textContent.slice(0, 500)}\n\n`;
-        }
-      });
-    }
-    
-    const isWorkMode = content.toLowerCase().includes('clippy') || content.toLowerCase().includes('task') || content.toLowerCase().includes('remind');
-    const history = messages.filter(m => m.id !== 'loading').slice(-8).map(m => ({ role: m.role, content: String(m.content || '').slice(0, 500) }));
-    
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: [...history, { role: 'user', content: finalContent }],
-        mode: isWorkMode ? 'work' : 'casual',
-        use_db: isWorkMode,
-        businessId: 'B1'
-      })
-    });
-    
-    const rawText = await res.text();
-    let data;
-    
-    try {
-      data = JSON.parse(rawText);
-    } catch {
-      throw new Error(rawText || `Server returned status ${res.status}`);
-    }
-    
-    if (!res.ok) {
-      const errMsg = typeof data?.error === 'string' 
-        ? data.error 
-        : data?.error?.message || JSON.stringify(data);
-      throw new Error(errMsg);
-    }
-    
-    let reply = data.reply;
-    if (!reply) {
-      if (data.error) {
-        const errMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
-        throw new Error(errMsg);
-      }
-      throw new Error('No reply from AI');
-    }
-    
-    messages = messages.filter(m => m.id !== 'loading');
-    messages.push({ role: 'assistant', content: reply, id: Date.now() + 1 });
-  } catch (e) {
-    console.error(e);
-    messages = messages.filter(m => m.id !== 'loading');
-    const errorText = typeof e === 'string' ? e : e?.message || 'Unknown error occurred';
-    messages.push({ role: 'assistant', content: 'Error: ' + errorText, id: Date.now() + 1 });
-  }
+async function send(){
+  const content=input.value.trim(); if(!content&&!attachments.length)return;
+  const userFiles=[...attachments]; messages.push({role:'user',content:content||'',files:userFiles,id:Date.now()});
+  input.value=''; attachments=[]; renderAttachments(); render(); input.style.height='auto'; updateSend();
+  messages.push({role:'assistant',content:'...',id:'loading'}); render();
+  try{
+    let finalContent=content||''; let imagePayloads=[];
+    if(userFiles.length){ finalContent+="\n\n"; userFiles.forEach(f=>{ if(f.isImage&&f.dataUrl){imagePayloads.push({name:f.name,dataUrl:f.dataUrl}); finalContent+=`[Image File: ${f.name} - vision data]\n`;} else if(f.textContent) finalContent+=`[File: ${f.name}]\n${f.textContent.slice(0,800)}\n\n`; }); }
+    const history=messages.filter(m=>m.id!=='loading').slice(-8).map(m=>({role:m.role,content:String(m.content||'').slice(0,500)}));
+    const isWorkMode=content.toLowerCase().includes('clippy')||content.toLowerCase().includes('task')||content.toLowerCase().includes('remind')||content.toLowerCase().includes('ads')||content.toLowerCase().includes('sales');
+    const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[...history.slice(0,-1),{role:'user',content:finalContent}],images:imagePayloads,mode:isWorkMode?'work':'casual',use_db:isWorkMode,businessId:'B1'})});
+    const rawText=await res.text(); let data; try{data=JSON.parse(rawText);}catch{throw new Error(rawText||`Status ${res.status}`);}
+    if(!res.ok) throw new Error(typeof data?.error==='string'?data.error:data?.error?.message||JSON.stringify(data));
+    if(!data.reply) throw new Error('No reply from AI');
+    messages=messages.filter(m=>m.id!=='loading'); messages.push({role:'assistant',content:data.reply,id:Date.now()+1});
+  }catch(e){console.error(e); messages=messages.filter(m=>m.id!=='loading'); messages.push({role:'assistant',content:'Error: '+(e.message||'Unknown'),id:Date.now()+1});}
   render();
 }
-
 sendBtn.onclick=send;
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+document.getElementById('exportBtn')?.addEventListener('click',()=>{try{const data=localStorage.getItem('clippy_chat_memory'); if(!data){alert('No chat data to export buddy!');return;} const blob=new Blob([data],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='clippy-memory-'+new Date().toISOString().slice(0,10)+'.json'; a.click(); URL.revokeObjectURL(url);}catch(e){alert('Export failed: '+e.message);}});
+document.getElementById('importBtn')?.addEventListener('click',()=>document.getElementById('importFile').click());
+document.getElementById('importFile')?.addEventListener('change',(e)=>{const file=e.target.files[0]; if(!file)return; const reader=new FileReader(); reader.onload=ev=>{try{const parsed=JSON.parse(ev.target.result); if(!Array.isArray(parsed))throw new Error('Invalid file'); if(!confirm('Import '+parsed.length+' messages?'))return; localStorage.setItem('clippy_chat_memory',JSON.stringify(parsed)); messages=parsed; render(); alert('Imported '+parsed.length+' messages! 🤖');}catch(err){alert('Import failed: '+err.message);}}; reader.readAsText(file); e.target.value='';});
 render();
 </script>
 </body>
