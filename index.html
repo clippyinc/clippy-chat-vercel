@@ -271,12 +271,14 @@ async function send(){
     }
 
     const history=messages.filter(m=>m.id!=='loading').slice(-8).map(m=>({role:m.role,content:String(m.content||'').slice(0,500)}));
-    const isWorkMode=content.toLowerCase().includes('clippy')||content.toLowerCase().includes('task')||content.toLowerCase().includes('remind')||content.toLowerCase().includes('ads')||content.toLowerCase().includes('sales')||imagePayloads.length>0;
 
     const res=await fetch('/api/chat',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:[...history.slice(0,-1),{role:'user',content:finalContent}],images:imagePayloads,mode:isWorkMode?'work':'casual',use_db:isWorkMode,businessId:'B1'})
+      body:JSON.stringify({
+        messages:[...history.slice(0,-1),{role:'user',content:finalContent}],
+        images:imagePayloads
+      })
     });
 
     const raw=await res.text();
