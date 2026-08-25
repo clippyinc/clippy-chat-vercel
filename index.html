@@ -1,49 +1,275 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clippy V2</title><link rel="manifest" href="/manifest.json">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:Inter,system-ui,sans-serif;background:#0a0a0a;color:#ececec;height:100vh;display:flex;flex-direction:column;overflow:hidden}
-header{position:fixed;top:0;left:0;right:0;height:56px;background:#0a0a0a;border-bottom:1px solid #212121;display:flex;align-items:center;justify-content:center;z-index:20}
-header span{font-weight:800;font-size:18px;letter-spacing:2px;font-family:monospace}
-#chat{flex:1;overflow-y:auto;padding:72px 0 140px;scroll-behavior:smooth}
-.inner{max-width:760px;margin:0 auto;padding:0 16px;display:flex;flex-direction:column;gap:24px}
-.bubble{max-width:85%;border-radius:18px;padding:12px 16px;font-size:15px;line-height:1.6;word-break:break-word;border:1px solid #212121;background:#171717}
-.user{align-self:flex-end;background:#2f2f2f;border-color:#3a3a3a}
-.assistant{align-self:flex-start}
-.input-wrap{display:flex;align-items:flex-end;gap:10px;background:#212121;border:1px solid #2a2a2a;border-radius:28px;padding:8px 10px}
-.icon-btn{width:36px;height:36px;border-radius:50%;background:#1a1a1a;border:1px solid #2a2a2a;color:#ececec;cursor:pointer;display:flex;align-items:center;justify-content:center}
-#msg{flex:1;background:transparent;border:0;color:white;outline:none;resize:none;min-height:24px;max-height:120px;padding:8px 4px;font-size:15px}
-#send{width:36px;height:36px;border-radius:50%;border:0;background:#3a3a3a;color:#8e8e8e;cursor:default;display:flex;align-items:center;justify-content:center;font-weight:700}
-#send.active{background:white;color:black;cursor:pointer}
-.confirm-bar{display:flex;gap:8px;margin-top:8px}
-.confirm-btn{background:#fff;color:#000;border:0;border-radius:20px;padding:6px 14px;font-size:13px;cursor:pointer;font-weight:600}
-</style><script src="memory.js"></script>
-</head>
-<body>
-<header><span>CLIPPY V2</span><div style="position:absolute;right:16px;display:flex;gap:8px"><button id="exportBtn" style="background:#212121;border:1px solid #2a2a2a;color:#8e8e8e;border-radius:12px;padding:4px 10px;font-size:11px;cursor:pointer">EXPORT</button><button id="importBtn" style="background:#212121;border:1px solid #2a2a2a;color:#8e8e8e;border-radius:12px;padding:4px 10px;font-size:11px;cursor:pointer">IMPORT</button></div><input type="file" id="importFile" accept=".json" style="display:none"></header>
-<div id="chat"><div class="inner" id="list"></div></div>
-<div id="bottom" style="position:fixed;bottom:0;left:0;right:0;background:#0a0a0a;border-top:1px solid #171717;padding:12px 0 16px"><div style="max-width:760px;margin:0 auto;padding:0 16px">
-<div id="attachPreview" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
-<div class="input-wrap"><input type="file" id="fileInput" multiple accept=".txt,.csv,.json,.md,image/*" style="display:none"><button class="icon-btn" id="attachBtn">+</button><textarea id="msg" placeholder="Type 'yes' to confirm..." rows="1"></textarea><button id="send">↑</button></div>
-</div></div>
 <script>
-const list=document.getElementById('list'),chat=document.getElementById('chat'),input=document.getElementById('msg'),sendBtn=document.getElementById('send'),fileInput=document.getElementById('fileInput'),attachBtn=document.getElementById('attachBtn'),attachPreview=document.getElementById('attachPreview');
-let messages=(typeof Memory!=='undefined'?Memory.init([]):[]),attachments=[];
-function formatSize(b){if(b<1024)return b+' B';if(b<1024*1024)return (b/1024).toFixed(1)+' KB';return (b/1024/1024).toFixed(1)+' MB';}
-function mdToHtml(t){let h=t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" target="_blank" style="color:#8ab4f8">$1</a>');return h.split('\n').join('<br>');}
-function render(){list.innerHTML='';messages.forEach(m=>{if(!m.content&&!m.files?.length)return;const w=document.createElement('div');w.style.display='flex';w.style.flexDirection='column';w.style.gap='8px';w.style.alignItems=m.role==='user'?'flex-end':'flex-start';const b=document.createElement('div');b.className='bubble '+(m.role==='user'?'user':'assistant');b.innerHTML=mdToHtml(m.content||'');if(m.awaitingConfirm){const bar=document.createElement('div');bar.className='confirm-bar';bar.innerHTML=`<button class="confirm-btn" data-yes>Yes, go ✓</button><button class="confirm-btn" style="background:#212121;color:#ececec" data-no>Cancel</button>`;bar.querySelector('[data-yes]').onclick=()=>{input.value='yes';send();};bar.querySelector('[data-no]').onclick=()=>{input.value='cancel';send();};b.appendChild(bar);}w.appendChild(b);list.appendChild(w);});chat.scrollTop=chat.scrollHeight;if(typeof Memory!=='undefined'){try{Memory.save(messages);}catch{}}}
-function renderAttachments(){attachPreview.innerHTML='';attachments.forEach(f=>{const d=document.createElement('div');d.style.cssText='display:flex;align-items:center;gap:8px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:8px 12px';d.innerHTML=`<span style="font-size:11px;background:#212121;padding:3px 6px;border-radius:6px">${f.ext}</span><span style="font-size:12px">${f.name}</span><button data-id="${f.id}" style="background:transparent;border:0;color:#8e8e8e;cursor:pointer;margin-left:8px">×</button>`;attachPreview.appendChild(d);});attachPreview.querySelectorAll('button').forEach(b=>b.onclick=()=>{attachments=attachments.filter(a=>a.id!=b.dataset.id);renderAttachments();updateSend();});}
-function updateSend(){const has=input.value.trim()||attachments.length>0;if(has){sendBtn.style.display='flex';sendBtn.classList.add('active');}else{sendBtn.style.display='none';}}
-input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,120)+'px';updateSend();});
-attachBtn.onclick=()=>fileInput.click();
-fileInput.onchange=(e)=>{Array.from(e.target.files||[]).forEach(file=>{const id=Date.now()+Math.random();const ext=(file.name.split('.').pop()||'FILE').toUpperCase();const obj={id,name:file.name,ext,size:formatSize(file.size),textContent:'',dataUrl:null,isImage:file.type.startsWith('image/')};if(file.size<5*1024*1024){if(obj.isImage){const r=new FileReader();r.onload=ev=>{obj.dataUrl=ev.target.result;renderAttachments();updateSend();};r.readAsDataURL(file);}else{const r=new FileReader();r.onload=ev=>{obj.textContent=String(ev.target.result).slice(0,1000);renderAttachments();};r.readAsText(file);}}attachments.push(obj);});fileInput.value='';renderAttachments();updateSend();};
-async function send(){const content=input.value.trim();if(!content&&!attachments.length)return;const userFiles=[...attachments];messages.push({role:'user',content:content||'',files:userFiles,id:Date.now()});input.value='';attachments=[];renderAttachments();render();updateSend();messages.push({role:'assistant',content:'...',id:'loading'});render();try{let finalContent=content||'',imgs=[];userFiles.forEach(f=>{if(f.isImage&&f.dataUrl){imgs.push({dataUrl:f.dataUrl});finalContent+=`[Image: ${f.name}]\n`;}else if(f.textContent)finalContent+=`[File: ${f.name}]\n${f.textContent.slice(0,800)}\n`;});const history=messages.filter(m=>m.id!=='loading').slice(-8).map(m=>({role:m.role,content:String(m.content||'').slice(0,500)}));const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[...history.slice(0,-1),{role:'user',content:finalContent}],images:imgs})});const raw=await res.text();let data;try{data=JSON.parse(raw);}catch{throw new Error(raw);}if(!res.ok)throw new Error(data?.error||raw);messages=messages.filter(m=>m.id!=='loading');messages.push({role:'assistant',content:data.reply,awaitingConfirm:!!data.awaitingConfirm,id:Date.now()+1});}catch(e){messages=messages.filter(m=>m.id!=='loading');messages.push({role:'assistant',content:'Error: '+e.message,id:Date.now()+1});}render();}
-sendBtn.onclick=send;input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
-document.getElementById('exportBtn').onclick=()=>{try{const d=localStorage.getItem('clippy_chat_memory');if(!d)return alert('No data');const b=new Blob([d],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='clippy-'+new Date().toISOString().slice(0,10)+'.json';a.click();}catch(e){alert(e.message);}};
-document.getElementById('importBtn').onclick=()=>document.getElementById('importFile').click();
-document.getElementById('importFile').onchange=(e)=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const p=JSON.parse(ev.target.result);if(!Array.isArray(p))throw Error('Invalid');localStorage.setItem('clippy_chat_memory',JSON.stringify(p));messages=p;render();alert('Imported '+p.length);}catch(err){alert(err.message);}};r.readAsText(f);};
+const list = document.getElementById('list');
+const chat = document.getElementById('chat');
+const input = document.getElementById('msg');
+const sendBtn = document.getElementById('send');
+const fileInput = document.getElementById('fileInput');
+const attachBtn = document.getElementById('attachBtn');
+const attachPreview = document.getElementById('attachPreview');
+
+let messages = (typeof Memory !== 'undefined' ? Memory.init([]) : []);
+let attachments = [];
+
+function formatSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function mdToHtml(t) {
+  if (!t) return '';
+  let h = t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" style="color:#8ab4f8">$1</a>');
+  return h.split('\n').join('<br>');
+}
+
+function render() {
+  list.innerHTML = '';
+  messages.forEach(m => {
+    if (!m.content && !m.files?.length) return;
+
+    const w = document.createElement('div');
+    w.style.display = 'flex';
+    w.style.flexDirection = 'column';
+    w.style.gap = '8px';
+    w.style.alignItems = m.role === 'user' ? 'flex-end' : 'flex-start';
+
+    const b = document.createElement('div');
+    b.className = 'bubble ' + (m.role === 'user' ? 'user' : 'assistant');
+    b.innerHTML = mdToHtml(m.content || '');
+
+    if (m.awaitingConfirm) {
+      const bar = document.createElement('div');
+      bar.className = 'confirm-bar';
+      bar.innerHTML = `<button class="confirm-btn" data-yes>Yes, go ✓</button><button class="confirm-btn" style="background:#212121;color:#ececec" data-no>Cancel</button>`;
+      
+      bar.querySelector('[data-yes]').onclick = () => {
+        m.awaitingConfirm = false; // Clear state on action
+        input.value = 'yes';
+        send();
+      };
+      
+      bar.querySelector('[data-no]').onclick = () => {
+        m.awaitingConfirm = false; // Clear state on action
+        input.value = 'cancel';
+        send();
+      };
+      
+      b.appendChild(bar);
+    }
+
+    w.appendChild(b);
+    list.appendChild(w);
+  });
+
+  chat.scrollTop = chat.scrollHeight;
+  if (typeof Memory !== 'undefined') {
+    try { Memory.save(messages); } catch(e) {}
+  }
+}
+
+function renderAttachments() {
+  attachPreview.innerHTML = '';
+  attachments.forEach(f => {
+    const d = document.createElement('div');
+    d.style.cssText = 'display:flex;align-items:center;gap:8px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:8px 12px';
+    d.innerHTML = `<span style="font-size:11px;background:#212121;padding:3px 6px;border-radius:6px">${f.ext}</span><span style="font-size:12px">${f.name}</span><button data-id="${f.id}" style="background:transparent;border:0;color:#8e8e8e;cursor:pointer;margin-left:8px">×</button>`;
+    attachPreview.appendChild(d);
+  });
+
+  attachPreview.querySelectorAll('button').forEach(b => {
+    b.onclick = () => {
+      attachments = attachments.filter(a => a.id != b.dataset.id);
+      renderAttachments();
+      updateSend();
+    };
+  });
+}
+
+function updateSend() {
+  const hasContent = input.value.trim() || attachments.length > 0;
+  if (hasContent) {
+    sendBtn.classList.add('active');
+  } else {
+    sendBtn.classList.remove('active');
+  }
+}
+
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  updateSend();
+});
+
+attachBtn.onclick = () => fileInput.click();
+
+fileInput.onchange = (e) => {
+  const files = Array.from(e.target.files || []);
+  let pending = files.length;
+
+  if (!pending) return;
+
+  files.forEach(file => {
+    const id = Date.now() + Math.random();
+    const ext = (file.name.split('.').pop() || 'FILE').toUpperCase();
+    const obj = {
+      id,
+      name: file.name,
+      ext,
+      size: formatSize(file.size),
+      textContent: '',
+      dataUrl: null,
+      isImage: file.type.startsWith('image/')
+    };
+
+    attachments.push(obj);
+
+    if (file.size < 5 * 1024 * 1024) {
+      const r = new FileReader();
+      r.onload = ev => {
+        if (obj.isImage) {
+          obj.dataUrl = ev.target.result;
+        } else {
+          obj.textContent = String(ev.target.result).slice(0, 1000);
+        }
+        pending--;
+        if (pending === 0) {
+          renderAttachments();
+          updateSend();
+        }
+      };
+
+      if (obj.isImage) {
+        r.readAsDataURL(file);
+      } else {
+        r.readAsText(file);
+      }
+    } else {
+      pending--;
+      if (pending === 0) {
+        renderAttachments();
+        updateSend();
+      }
+    }
+  });
+
+  fileInput.value = '';
+};
+
+async function send() {
+  const content = input.value.trim();
+  if (!content && !attachments.length) return;
+
+  // Clear awaitingConfirm flag from all previous messages
+  messages.forEach(m => m.awaitingConfirm = false);
+
+  const userFiles = [...attachments];
+  messages.push({ role: 'user', content: content || '', files: userFiles, id: Date.now() });
+
+  input.value = '';
+  input.style.height = 'auto';
+  attachments = [];
+  renderAttachments();
+  render();
+  updateSend();
+
+  messages.push({ role: 'assistant', content: '...', id: 'loading' });
+  render();
+
+  try {
+    let finalContent = content || '';
+    let imgs = [];
+
+    userFiles.forEach(f => {
+      if (f.isImage && f.dataUrl) {
+        imgs.push({ dataUrl: f.dataUrl });
+        finalContent += `\n[Image: ${f.name}]`;
+      } else if (f.textContent) {
+        finalContent += `\n[File: ${f.name}]\n${f.textContent.slice(0, 800)}`;
+      }
+    });
+
+    const history = messages
+      .filter(m => m.id !== 'loading')
+      .slice(-8)
+      .map(m => ({ role: m.role, content: String(m.content || '').slice(0, 500) }));
+
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [...history.slice(0, -1), { role: 'user', content: finalContent }],
+        images: imgs
+      })
+    });
+
+    const raw = await res.text();
+    let data;
+    try { data = JSON.parse(raw); } catch { throw new Error(raw); }
+
+    if (!res.ok) throw new Error(data?.error || raw);
+
+    messages = messages.filter(m => m.id !== 'loading');
+    messages.push({
+      role: 'assistant',
+      content: data.reply,
+      awaitingConfirm: !!data.awaitingConfirm,
+      id: Date.now() + 1
+    });
+
+  } catch (e) {
+    messages = messages.filter(m => m.id !== 'loading');
+    messages.push({ role: 'assistant', content: 'Error: ' + e.message, id: Date.now() + 1 });
+  }
+
+  render();
+}
+
+sendBtn.onclick = send;
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    send();
+  }
+});
+
+document.getElementById('exportBtn').onclick = () => {
+  try {
+    const data = JSON.stringify(messages);
+    if (!messages.length) return alert('No chat history to export.');
+    const b = new Blob([data], { type: 'application/json' });
+    const u = URL.createObjectURL(b);
+    const a = document.createElement('a');
+    a.href = u;
+    a.download = 'clippy-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
+
+document.getElementById('importFile').onchange = (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    try {
+      const p = JSON.parse(ev.target.result);
+      if (!Array.isArray(p)) throw Error('Invalid chat history format');
+      messages = p;
+      if (typeof Memory !== 'undefined') {
+        try { Memory.save(messages); } catch(e) {}
+      }
+      render();
+      alert('Imported ' + p.length + ' messages.');
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+  r.readAsText(f);
+};
+
 render();
-</script></body></html>
+</script>
