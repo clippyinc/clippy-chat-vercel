@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clippy Jarvis Terminal</title>
+  <style>
+    @font-face {
+      font-family: "Optimistic";
+      font-style: normal;
+      font-weight: 400 600;
+      font-display: swap;
+      src: url("/fonts/OptimisticAI_VF_Optimized.woff2") format("woff2");
+    }
+    @font-face {
+      font-family: "Optimistic Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url("/fonts/OptimisticMono_W_TextRegular.woff2") format("woff2");
+    }
+    *, :after, :before {
+      box-sizing: border-box;
+      border: 0 solid #e5e7eb;
+    }
+    html {
+      line-height: 1.5;
+      -webkit-text-size-adjust: 100%;
+      tab-size: 4;
+      font-family: "Optimistic", system-ui, sans-serif;
+      min-height: 100%;
+    }
+    body {
+      margin: 0;
+      line-height: inherit;
+      background-color: #0a0a0a;
+      color: #fff;
+      font-family: Inter, system-ui, sans-serif;
+      min-height: 100%;
+    }
+    .fixed { position: fixed; }
+    .bottom-0 { bottom: 0; }
+    .left-0 { left: 0; }
+    .right-0 { right: 0; }
+    .top-0 { top: 0; }
+    .z-40 { z-index: 40; }
+    .z-50 { z-index: 50; }
+    .mx-auto { margin-left: auto; margin-right: auto; }
+    .mb-2 { margin-bottom: .5rem; }
+    .mb-3 { margin-bottom: .75rem; }
+    .mt-2.5 { margin-top: .625rem; }
+    .flex { display: flex; }
+    .hidden { display: none; }
+    .w-5 { width: 1.25rem; }
+    .h-5 { height: 1.25rem; }
+    .w-9 { width: 2.25rem; }
+    .h-9 { height: 2.25rem; }
+    .w-full { width: 100%; }
+    .max-h-\[120px\] { max-height: 120px; }
+    .min-h-9 { min-height: 2.25rem; }
+    .min-h-\[24px\] { min-height: 24px; }
+    .min-h-screen { min-height: 100vh; }
+    .max-w-\[160px\] { max-width: 160px; }
+    .max-w-\[680px\] { max-width: 680px; }
+    .max-w-\[85\%\] { max-width: 85%; }
+    .flex-1 { flex: 1 1 0%; }
+    .shrink-0 { flex-shrink: 0; }
+    .resize-none { resize: none; }
+    .flex-col { flex-direction: column; }
+    .flex-wrap { flex-wrap: wrap; }
+    .items-end { align-items: flex-end; }
+    .items-center { align-items: center; }
+    .justify-start { justify-content: flex-start; }
+    .justify-end { justify-content: flex-end; }
+    .justify-center { justify-content: center; }
+    .gap-2 { gap: .5rem; }
+    .gap-4 { gap: 1rem; }
+    .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .whitespace-pre-wrap { white-space: pre-wrap; }
+    .break-words { overflow-wrap: break-word; }
+    .rounded-\[12px\] { border-radius: 12px; }
+    .rounded-\[16px\] { border-radius: 16px; }
+    .rounded-\[28px\] { border-radius: 28px; }
+    .rounded-\[8px\] { border-radius: 8px; }
+    .rounded-full { border-radius: 9999px; }
+    .border-b { border-bottom-width: 1px; }
+    .border-t { border-top-width: 1px; }
+    .border-\[\#171717\] { border-color: #171717; }
+    .border-\[\#212121\] { border-color: #212121; }
+    .border-\[\#2a2a2a\] { border-color: #2a2a2a; }
+    .bg-\[\#0a0a0a\] { background-color: #0a0a0a; }
+    .bg-\[\#171717\] { background-color: #171717; }
+    .bg-\[\#1a1a1a\] { background-color: #1a1a1a; }
+    .bg-\[\#212121\] { background-color: #212121; }
+    .bg-\[\#2a2a2a\] { background-color: #2a2a2a; }
+    .bg-\[\#3a3a3a\] { background-color: #3a3a3a; }
+    .bg-white { background-color: #fff; }
+    .text-black { color: #000; }
+    .p-2 { padding: .5rem; }
+    .px-1 { padding-left: .25rem; padding-right: .25rem; }
+    .px-2 { padding-left: .5rem; padding-right: .5rem; }
+    .px-3 { padding-left: .75rem; padding-right: .75rem; }
+    .px-4 { padding-left: 1rem; padding-right: 1rem; }
+    .py-1 { padding-top: .25rem; padding-bottom: .25rem; }
+    .py-2 { padding-top: .5rem; padding-bottom: .5rem; }
+    .py-3 { padding-top: .75rem; padding-bottom: .75rem; }
+    .pb-\[148px\] { padding-bottom: 148px; }
+    .pt-8 { padding-top: 2rem; }
+    .pt-\[56px\] { padding-top: 56px; }
+    .text-center { text-align: center; }
+    .font-mono { font-family: "Optimistic Mono", ui-monospace, monospace; }
+    .text-\[10px\] { font-size: 10px; }
+    .text-\[11px\] { font-size: 11px; }
+    .text-\[12px\] { font-size: 12px; }
+    .text-\[13px\] { font-size: 13px; }
+    .text-\[15px\] { font-size: 15px; }
+    .text-\[18px\] { font-size: 18px; }
+    .font-bold { font-weight: 700; }
+    .font-medium { font-weight: 500; }
+    .leading-6 { line-height: 1.5rem; }
+    .tracking-\[2px\] { letter-spacing: 2px; }
+    .text-neutral-200 { color: #e5e7eb; }
+    .text-neutral-300 { color: #d4d4d4; }
+    .text-neutral-400 { color: #a3a3a3; }
+    .text-neutral-500 { color: #737373; }
+    .text-neutral-600 { color: #525252; }
+    .outline-none { outline: 2px solid transparent; outline-offset: 2px; }
+    .transition-all { transition: all .15s; }
+    .transition-colors { transition: color .15s, background-color .15s, border-color .15s; }
+    button { cursor: pointer; background: transparent; color: inherit; }
+    button:disabled { cursor: default; }
+    ::-webkit-scrollbar { width: 0; height: 0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="module">
+    import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18.3.1';
+    import ReactDOM from 'https://esm.sh/react-dom@18.3.1/client';
+
+    // Standalone component icon elements built using native vectors to prevent loading issues
+    const ArrowUpIcon = () => React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.5, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "m5 12 7-7 7 7" }), React.createElement("path", { d: "M12 19V5" }));
+    const PlusIcon = () => React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M5 12h14" }), React.createElement("path", { d: "M12 5v14" }));
+    const CrossIcon = () => React.createElement("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M18 6 6 18" }), React.createElement("path", { d: "m6 6 12 12" }));
+
+    const DB_STORAGE_KEY = "clippy_terminal_history";
+
+    function ClippyTerminal() {
+      const [messages, setMessages] = useState(() => {
+        try {
+          const cached = localStorage.getItem(DB_STORAGE_KEY);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length) return parsed;
+          }
+        } catch {}
+        return [{ role: "assistant", content: "Mabuhay, Gelo! Clippy at your service. Let me know what we are searching, saving, or tracking tonight, bro.", ts: Date.now() }];
+      });
+
+      const [textInput, setTextInput] = useState("");
+      const [attachedFiles, setAttachedFiles] = useState([]);
+      const [isProcessing, setIsProcessing] = useState(false);
+      const [fileAlertActive, setFileAlertActive] = useState(false);
+
+      const hiddenFileInput = useRef(null);
+      const endOfFeedRef = useRef(null);
+      const autoExpandingTextarea = useRef(null);
+
+      useEffect(() => {
+        localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(messages));
+      }, [messages]);
+
+      useEffect(() => {
+        endOfFeedRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, [messages, attachedFiles]);
+
+      useEffect(() => {
+        if (autoExpandingTextarea.current) {
+          autoExpandingTextarea.current.style.height = "24px";
+          autoExpandingTextarea.current.style.height = Math.min(autoExpandingTextarea.current.scrollHeight, 120) + "px";
+        }
+      }, [textInput]);
+
+      const processFileSelection = (e) => {
+        const fileList = e.target.files;
+        if (!fileList) return;
+
+        Array.from(fileList).forEach(file => {
+          const filenameLower = file.name.toLowerCase();
+          const validPdf = filenameLower.endsWith('.pdf');
+          const validCsv = filenameLower.endsWith('.csv');
+
+          if (!validPdf && !validCsv) {
+            alert("Only PDF and CSV files are allowed for Mark 1 layout processing, manager.");
+            return;
+          }
+
+          const fileReader = new FileReader();
+          fileReader.onload = () => {
+            const fileStringContent = String(fileReader.result || "");
+            setAttachedFiles(prev => {
+              if (prev.length >= 3) return prev;
+              return [...prev, { name: file.name, ext: validPdf ? "PDF" : "CSV", content: fileStringContent.slice(0, 4000) }];
+            });
+          };
+          fileReader.readAsText(file);
+        });
+
+        if (hiddenFileInput.current) hiddenFileInput.current.value = "";
+      };
+
+      const dispatchPayloadToBackend = async () => {
+        const cleanMsg = textInput.trim();
+        if ((!cleanMsg && attachedFiles.length === 0) || isProcessing) return;
+
+        // Collect content parameters across the local session storage lines
+        const dynamicDocumentContext = attachedFiles.map(f => `[FILE PARSED: ${f.name}]\n\${f.content.slice(0, 1000)}`).join("\n\n");
+        const compositeQueryString = cleanMsg + (dynamicDocumentContext ? `\n\n\${dynamicDocumentContext}` : "");
+
+        const localUserLogBlock = { 
+          role: "user", 
+          content: cleanMsg || `Attached Docs: \${attachedFiles.map(f => f.name).join(", ")}`, 
+          ts: Date.now() 
+        };
+
+        setMessages(prev => [...prev, localUserLogBlock]);
+        setTextInput("");
+        setAttachedFiles([]);
+        setIsProcessing(true);
+
+        try {
+          // Direct communication tunnel targeting our serverless endpoint module location
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: compositeQueryString,
+              messages: messages.slice(-6).map(m => ({ role: m.role, content: m.content }))
+            })
+          });
+
+          const dataResponse = await response.json();
+          setMessages(prev => [...prev, { role: "assistant", content: dataResponse.reply || "Server function execution fault parameter missing.", ts: Date.now() }]);
+        } catch (error) {
+          setMessages(prev => [...prev, { role: "assistant", content: `Route Connection Error: \${error.message}`, ts: Date.now() }]);
+        } finally {
+          setIsProcessing(false);
+        }
+      };
+
+      const formControlValidFlags = textInput.trim().length > 0 || attachedFiles.length > 0;
+
+      return React.createElement("div", { className: "min-h-screen bg-[#0a0a0a] text-white flex flex-col selection:bg-white selection:text-black" },
+        // Top Fixed Panel Container Header Row
+        React.createElement("header", { className: "fixed top-0 left-0 right-0 h-[56px] bg-[#0a0a0a] border-b border-[#212121] flex items-center justify-center z-50" },
+          React.createElement("button", { className: "font-mono font-bold text-[18px] tracking-[2px] text-white" }, "CLIPPY")
+        ),
+
+        // System target input file elements
+        React.createElement("input", { ref: hiddenFileInput, type: "file", accept: ".pdf,.csv", multiple: true, className: "hidden", onChange: processFileSelection }),
+
+        // Core Message History Feed Panel Window
+        React.createElement("main", { className: "flex-1 w-full pt-[56px] pb-[148px]" },
+          React.createElement("div", { className: "w-full max-w-[680px] mx-auto px-4 pt-8 flex flex-col gap-4" },
+            messages.map((m, idx) => 
+              React.createElement("div", { key: idx, className: `flex \${m.role === 'user' ? 'justify-end' : 'justify-start'}` },
+                React.createElement("div", { className: `max-w-[85%] rounded-[16px] px-4 py-3 text-[15px] leading-[1.6] whitespace-pre-wrap break-words \${m.role === 'user' ? 'bg-[#2a2a2a] text-white' : 'bg-[#171717] text-neutral-200'}` }, m.content)
+              )
+            ),
+            React.createElement("div", { ref: endOfFeedRef })
+          )
+        ),
+
+        // Fixed Control Console Layout Dock at the bottom
+        React.createElement("div", { className: "fixed bottom-0 left-0 right-0 bg-[#0a0a0a] border-t border-[#171717] z-40" },
+          React.createElement("div", { className: "w-full max-w-[680px] mx-auto px-3 py-3" },
+            fileAlertActive && React.createElement("div", { className: "mb-2 px-3 py-2 bg-[#171717] border border-[#2a2a2a] rounded-full text-[11px] text-neutral-400 w-fit" }, "Select PDF or CSV — Mark 1 clean text focus"),
+            
+            // Layout chip arrays visualizing pending uploaded file assets
+            attachedFiles.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-2 mb-3 px-1" },
+              attachedFiles.map((file, fIdx) => 
+                React.createElement("div", { key: fIdx, className: "flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded-full pl-1 pr-2 py-1" },
+                  React.createElement("span", { className: "bg-[#2a2a2a] text-[10px] font-mono font-bold tracking-wider text-neutral-300 px-2 py-1 rounded-full" }, file.ext),
+                  React.createElement("span", { className: "text-[12px] text-neutral-300 max-w-[160px] truncate" }, file.name),
+                  React.createElement("button", { 
+                    onClick: () => setAttachedFiles(prev => prev.filter((_, targetIdx) => targetIdx !== fIdx)),
+                    className: "w-5 h-5 rounded-full bg-[#2a2a2a] hover:bg-[#333] flex items-center justify-center transition-colors" 
+                  }, React.createElement(CrossIcon, null))
+                )
+              )
+            ),
+
+            // Execution Input Row Container
+            React.createElement("div", { className: "flex items-end gap-2 bg-[#212121] rounded-[28px] p-2 border border-transparent focus-within:border-[#2a2a2a] transition-colors" },
+              React.createElement("button", { 
+                onClick: () => { setFileAlertActive(true); setTimeout(() => setFileAlertActive(false), 2500); hiddenFileInput.current?.click(); },
+                className: "w-9 h-9 min-w-9 min-h-9 rounded-full bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center hover:bg-[#222] transition-colors shrink-0"
+              }, React.createElement(PlusIcon, null)),
+              
+              React.createElement("textarea", { 
+                ref: autoExpandingTextarea,
+                value: textInput,
+                onChange: (e) => setTextInput(e.target.value),
+                onKeyDown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); dispatchPayloadToBackend(); } },
+                placeholder: "Ask Clippy or route keys (!search, !save, !fetch)...",
+                rows: 1,
+                className: "flex-1 bg-transparent outline-none resize-none text-[15px] leading-6 text-white placeholder:text-neutral-500 py-[6px] max-h-[120px] min-h-[24px]"
+              }),
+              
+              React.createElement("button", { 
+                onClick: dispatchPayloadToBackend,
+                disabled: !formControlValidFlags || isProcessing,
+                className: `w-9 h-9 min-w-9 min-h-9 rounded-full flex items-center justify-center transition-all shrink-0 \${formControlValidFlags ? 'bg-white text-black hover:bg-neutral-200' : 'bg-[#3a3a3a] text-neutral-500'}`
+              }, React.createElement(ArrowUpIcon, null))
+            ),
+            
+            React.createElement("div", { className: "text-[11px] text-neutral-600 text-center mt-2.5 font-mono" }, "PDF • CSV only — Mark 1 clean text focus")
+          )
+        )
+      );
+    }
+
+    const domContainerRootNode = ReactDOM.createRoot(document.getElementById("root"));
+    domContainerRootNode.render(React.createElement(React.StrictMode, null, React.createElement(ClippyTerminal, null)));
+  </script>
+</body>
+</html>
