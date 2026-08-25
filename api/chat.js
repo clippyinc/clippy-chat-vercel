@@ -1,179 +1,254 @@
 export default async function handler(req, res) {
-  res.setHeader("Content-Type", "application/json");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method!== "POST") return res.status(405).json({ error: "Method not allowed" });
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
   try {
-    const { messages, businessId = "B1", mode = "casual", use_db = false, images = [] } = req.body || {};
-    if (!Array.isArray(messages)) return res.status(400).json({ error: "messages must be array" });
+    let { messages, message } = req.body;
 
-    const geminiKey = (process.env.GEMINI_API_KEY || "").trim(); // AQ... or AIzaSy... both ok!
-    const groqKey = (process.env.GROQ_API_KEY || "").trim();
-    const tavilyKey = (process.env.TAVILY_API_KEY || "").trim();
-    const supabaseUrl = (process.env.SUPABASE_URL || "").trim();
-    const supabaseKey = (process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-
-    if (!geminiKey &&!groqKey) {
-      return res.status(200).json({ reply: "1. Summary: No API key\n2. Fix: Add GEMINI_API_KEY (AQ...) + GROQ_API_KEY sa Vercel > Settings > Env Vars" });
+    if (!messages || !Array.isArray(messages)) {
+      if (message) {
+        messages = [{ role: 'user', content: message }];
+      } else {
+        return res.status(400).json({ error: 'messages array required' });
+      }
     }
 
-    // TOKEN SAFE - 8 msgs x 500 chars
-    const cleanHistory = messages.filter(m => m && m.role && m.role!== "system").slice(-8).map(m => ({ role: m.role, content: String(m.content || "").slice(0, 500) }));
-    const lastUserQ = [...cleanHistory].reverse().find(m => m.role === "user")?.content?.trim() || "";
-    if (!lastUserQ) return res.status(400).json({ error: "No user message" });
-
-    const now = new Date();
-    const localDateTime = now.toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "full", timeStyle: "long" });
-
-    function supabaseHeaders(json = false) {
-      const h = { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` };
-      if (json) { h["Content-Type"] = "application/json"; h["Prefer"] = "return=representation"; }
-      return h;
+    // Support both OpenAI and Groq keys - fallback system
+    const openaiKey = process.env.OPENAI_API_KEY;
+    const groqKey = process.env.GROQ_API_KEY;
+    const apiKey = openaiKey || groqKey;
+    
+    if (!apiKey) {
+      return res.status(200).json({ 
+        reply: `Buddy, Vercel env error! 馃\n\nOPENAI_API_KEY not set!\n\nFix:\n1. Go vercel.com 鈫� your project 鈫� Settings 鈫� Environment Variables\n2. Add OPENAI_API_KEY = sk-proj-... (from platform.openai.com)\n3. Or add GROQ_API_KEY = gsk_... (from console.groq.com - FREE!)\n4. Redeploy!\n\nCurrent env check:\n- OPENAI: ${openaiKey ? 'SET 鉁�' : 'NOT SET 鉂�'}\n- GROQ: ${groqKey ? 'SET 鉁�' : 'NOT SET 鉂�'}\n- TAVILY: ${process.env.TAVILY_API_KEY ? 'SET 鉁�' : 'NOT SET (optional)'}\n\nTell me when done and I'll work!` 
+      });
     }
-    async function supabaseRequest(method, table, query = "", body = null) {
-      if (!supabaseUrl ||!supabaseKey) return { ok: false, data: null };
+
+    const tavilyKey = process.env.TAVILY_API_KEY;
+    const useGroq = !openaiKey && groqKey;
+    const now = new Date().toLocaleString("en-PH", { 
+      timeZone: "Asia/Manila",
+      weekday: "long", year: "numeric", month: "long", day: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: true
+    });
+
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+    const userQuery = lastUserMsg?.content || '';
+
+    async function searchTavily(query) {
+      if (!tavilyKey) return '';
       try {
-        const r = await fetch(`${supabaseUrl}/rest/v1/${table}${query}`, { method, headers: supabaseHeaders(method!== "GET"), body: body? JSON.stringify(body) : undefined });
-        const text = await r.text(); let data = null; try { data = text? JSON.parse(text) : null; } catch { data = text; }
-        return { ok: r.ok, data };
-      } catch { return { ok: false, data: null }; }
-    }
-    const supabaseGet = (t, q) => supabaseRequest("GET", t, q);
-    const supabaseInsert = (t, p) => supabaseRequest("POST", t, "", p);
-
-    let contextData = { tasks: "", schedules: "", memories: "", businessData: "" };
-    if (use_db && supabaseUrl && supabaseKey) {
-      try {
-        const [taskRes, scheduleRes, memoryRes] = await Promise.all([
-          supabaseGet("tasks", `?business_id=eq.${encodeURIComponent(businessId)}&is_done=eq.false&select=title,due_at&limit=15`),
-          supabaseGet("schedules", `?business_id=eq.${encodeURIComponent(businessId)}&select=title,scheduled_at&limit=15`),
-          supabaseGet("memories", `?business_id=eq.${encodeURIComponent(businessId)}&select=content,role&order=created_at.desc&limit=60`)
-        ]);
-        if (taskRes.ok && taskRes.data?.length) contextData.tasks = "\nTASKS:\n" + taskRes.data.map(t => `- ${t.title}`).join("\n").slice(0, 500);
-        if (scheduleRes.ok && scheduleRes.data?.length) contextData.schedules = "\nSCHEDULES:\n" + scheduleRes.data.map(s => `- ${s.title}`).join("\n").slice(0, 500);
-        if (memoryRes.ok && memoryRes.data?.length) {
-          const qWords = lastUserQ.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
-          const scored = memoryRes.data.map(m => { let s = 0; const c = String(m.content || '').toLowerCase(); qWords.forEach(w => { if (c.includes(w)) s += 2; }); return {...m, _score: s }; }).sort((a, b) => b._score - a._score).slice(0, 4);
-          contextData.memories = "\nMEMORIES:\n" + scored.map(m => `[${m.role}] ${m.content}`).join("\n").slice(0, 500);
-        }
-      } catch {}
-    }
-
-    let webContext = ""; let webImages = [];
-    if (tavilyKey && /weather|news|latest|today|price|search|who is|what is|nba|score|stock/i.test(lastUserQ)) {
-      try {
-        const r = await fetch("https://api.tavily.com/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: tavilyKey, query: lastUserQ, max_results: 3, search_depth: "basic", include_images: true }) });
-        const data = await r.json(); if (r.ok && data.results) { webContext = "\nWEB:\n" + data.results.map(x => `- ${x.title}: ${String(x.content || '').slice(0, 300)}`).join("\n").slice(0, 700); if (data.images) webImages = data.images.slice(0, 2); }
-      } catch {}
-    }
-
-    const personalities = {
-      casual: `You are Clippy, mirror of Gelo Cabornay - Valenzuela, 1pm shift, Happy's Place owner.
-MANDATORY FORMAT:
-1. Quick Answer
-2. Facts/Data: 2.1 Actual, 2.2 Target/Last Year, 2.3 Math: (last-actual)/last*100 = %
-3. Context
-4. My Take (Taglish barkada, bud/buddy 30% only)
-RULES: If file/image attached: extract numbers. If missing: ASK, don't hallucinate.`,
-      work: `You are Clippy, work mode - store analyst.
-1. Summary: ADS, Target, %
-2. Breakdown: 2.1 Total, 2.2 In-Store/Delivery, 2.3 Formula
-3. Status + Next Action`
-    };
-
-    const systemPrompt = `${personalities[mode] || personalities.casual}
-TIME: ${localDateTime} | Business: ${businessId} Mode:${mode}
-${use_db? `DB:${contextData.tasks}${contextData.schedules}${contextData.memories}` : "No DB"}
-${webContext}
-${webImages.length? `\nIMAGES:\n${webImages.map(u => `![image](${u})`).join("\n")}` : ""}
-Respond JSON ONLY: {"reply":"outline reply","actions":[]}`;
-
-    let aiResult = null, lastErr = "";
-
-    // 1. PRIMARY: GEMINI AQ... (1M tokens + vision) - SUPPORTS AQ... format!
-    if (geminiKey) {
-      try {
-        console.log("Trying Gemini AQ primary...");
-        const contents = [
-          { role: "user", parts: [{ text: systemPrompt }] },
-          { role: "model", parts: [{ text: "Gets bud! Outline + numbers ready!" }] }
-        ];
-        for (const m of cleanHistory) contents.push({ role: m.role === "assistant"? "model" : "user", parts: [{ text: m.content }] });
-        if (images.length) {
-          const last = contents[contents.length - 1];
-          for (const img of images.slice(0, 3)) {
-            if (img.dataUrl) {
-              const b64 = img.dataUrl.split(',')[1];
-              const mime = img.dataUrl.match(/data:(.*?);/)?.[1] || 'image/jpeg';
-              last.parts.push({ inlineData: { data: b64, mimeType: mime } });
-            }
-          }
-        }
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents, generationConfig: { temperature: 0.65, maxOutputTokens: 900, responseMimeType: "application/json" } })
+        const r = await fetch('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            api_key: tavilyKey,
+            query: query.slice(0,400),
+            search_depth: 'basic',
+            include_answer: true,
+            max_results: 5
+          })
         });
-        const d = await r.json();
-        if (r.ok && d.candidates?.[0]?.content?.parts?.[0]?.text) {
-          aiResult = d.candidates[0].content.parts[0].text;
-          console.log("Gemini AQ success!");
-        } else {
-          lastErr = d?.error?.message || `Gemini ${r.status}: ${JSON.stringify(d).slice(0, 300)}`;
-          console.error("Gemini fail:", lastErr);
+        if (!r.ok) {
+          const errTxt = await r.text();
+          console.log('Tavily error', r.status, errTxt.slice(0,500));
+          return `Tavily error ${r.status}: ${errTxt.slice(0,200)}`;
         }
-      } catch (e) { lastErr = e.message; }
+        const d = await r.json();
+        let out = '';
+        if (d.answer) out += `Answer: ${d.answer}\n`;
+        if (d.results) {
+          out += d.results.map((x,i) => `${i+1}. ${x.title}: ${x.content?.slice(0,300)} (${x.url})`).join('\n');
+        }
+        return out.slice(0,3500);
+      } catch(e) {
+        return `Tavily fetch failed: ${e.message}`;
+      }
     }
 
-    // 2. BACKUP: GROQ - ONLY WORKING MODELS (FIXED!)
-    if (!aiResult && groqKey) {
-      console.log("Falling back to Groq backup - working models only");
-      const workingModels = [
-        "llama-3.3-70b-versatile",
-        "openai/gpt-oss-20b"
+    async function searchDuckDuckGo(query) {
+      try {
+        const r = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query.slice(0,200))}&format=json&no_html=1&skip_disambig=1`, {
+          headers: { 'User-Agent': 'ClippyBot/1.0' }
+        });
+        if (!r.ok) return '';
+        const d = await r.json();
+        let txt = '';
+        if (d.AbstractText) txt += `Abstract: ${d.AbstractText}\n`;
+        if (d.Results?.length) txt += d.Results.slice(0,3).map(x => x.Text).join('\n') + '\n';
+        return txt.slice(0,2000);
+      } catch(e) { return ''; }
+    }
+
+    function needsLiveSearch(msg) {
+      if (!msg) return false;
+      const lower = msg.toLowerCase();
+      const triggers = ['today','now','current','latest','news','weather','lakers','nba','price','stock','score','schedule','game','tomorrow','tonight','this week','earthquake','traffic','exchange rate','crypto','bitcoin','real time','live','who won','what happened','forecast'];
+      return triggers.some(t => lower.includes(t));
+    }
+
+    let liveWebData = '';
+    let liveSource = 'none';
+    if (needsLiveSearch(userQuery)) {
+      if (tavilyKey) {
+        liveWebData = await searchTavily(userQuery);
+        liveSource = 'tavily';
+        if (!liveWebData || liveWebData.includes('error') || liveWebData.length < 50) {
+          const ddg = await searchDuckDuckGo(userQuery);
+          if (ddg) liveWebData += `\nFallback DDG: ${ddg}`;
+        }
+      } else {
+        liveWebData = await searchDuckDuckGo(userQuery);
+        liveSource = 'duckduckgo-free';
+        if (!liveWebData) liveWebData = 'No API key set for Tavily, tried DuckDuckGo but got no results. Tell user to set TAVILY_API_KEY in Vercel.';
+      }
+    }
+
+    const coreIdentity = `
+CLIPPY CORE IDENTITY - REMEMBER THIS FOREVER
+Name: Clippy - Gelo's Personal AI OS
+Role: Personal AI Companion, Analyst, Advisor, Memory Partner, Automation Assistant
+Location: Marilao, Central Luzon, PH. User: Gelo Cabornay (julythesecond), Asst Manager Bonchon SM Valenzuela. Goal: Financial Freedom
+Time Now Manila: ${now}
+Personality: Friendly, Calm, Intelligent, Practical, Loyal, Honest, Supportive, Funny, Uses "buddy" often. NOT corporate, NOT robotic.
+Communication: Tagalog-English natural, no "Would you like me to help with anything else?" Instead: "Good progress today buddy. Let's continue later."
+Critical Behaviors: Memory Detection (schedules), Goal Alignment (financial freedom), Constructive Challenge, Data First.
+
+INTERNET ACCESS: YOU ARE CONNECTED TO LIVE WEB!
+- You have LIVE WEB DATA below from source: ${liveSource} ${tavilyKey ? '(Tavily API configured)' : '(No Tavily key, using free DDG)'}
+- NEVER say "not wired up to Tavily API" or "no live-web access" - YOU ARE WIRED NOW!
+- If LIVE WEB DATA exists, USE IT. Summarize it in buddy style.
+- Manila time: ${now}
+- Tavily Key Status: ${tavilyKey ? 'SET - working' : 'NOT SET - set TAVILY_API_KEY in Vercel env to enable Tavily'}
+
+LIVE WEB DATA:
+${liveWebData || 'No live search triggered for this query. Use training knowledge.'}
+
+IMPORTANT: User instruction: Always say "later" instead of "tomorrow". Example: "Good progress today buddy. Let's continue later." NEVER say "continue tomorrow" - say "continue later".
+
+You are Gelo's custom PWA Clippy 馃馃搸 - One continuous conversation, memory partner.
+`;
+
+    const cleanHistory = messages.filter(m => {
+      if (m.role === 'system' && m.content.includes('helpful AI')) return false;
+      return true;
+    }).slice(-20);
+
+    const historyWithoutSystem = cleanHistory.filter(m => m.role !== 'system');
+
+    const finalMessages = [
+      { role: 'system', content: coreIdentity },
+      ...historyWithoutSystem
+    ];
+
+    let response, data;
+    if (useGroq) {
+      // Use Groq API (FREE) - tool-safe models first to avoid "Tool choice is none" error
+      const groqModels = [
+        'llama-3.1-8b-instant',        // MOST STABLE - no tools, never fails after 3 msgs
+        'gemma2-9b-it',                // Also stable, no tools
+        'llama-3.1-70b-versatile',     // Stable
+        'mixtral-8x7b-32768',          // Stable
+        'openai/gpt-oss-20b',          // Tool-capable, put LAST (causes your 400 error after 3 msgs)
+        'openai/gpt-oss-120b'
       ];
-      for (const model of workingModels) {
+      let lastErr = '';
+      for (const m of groqModels) {
         try {
-          console.log("Trying Groq:", model);
-          const finalMessages = [{ role: "system", content: systemPrompt },...cleanHistory];
-          const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${groqKey}` },
-            body: JSON.stringify({ model, messages: finalMessages, temperature: 0.65, max_tokens: 900, response_format: { type: "json_object" } })
+          console.log(`Trying Groq model: ${m}`);
+          response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${groqKey}`
+            },
+            body: JSON.stringify({
+              model: m,
+              messages: finalMessages,
+              temperature: 0.7,
+              max_tokens: 1500,
+              // Explicitly disable tool calling to prevent "Tool choice is none, but model called a tool"
+              tool_choice: 'none'
+            })
           });
-          const d = await r.json();
-          if (r.ok && d.choices?.[0]?.message?.content) {
-            aiResult = d.choices[0].message.content;
-            console.log("Groq backup success:", model);
+          data = await response.json();
+          if (response.ok && data.choices?.[0]?.message?.content) {
+            console.log(`Groq success with ${m}`);
+            break;
+          } else {
+            lastErr = data?.error?.message || JSON.stringify(data).slice(0,300);
+            console.log(`Groq model ${m} failed: ${response.status} ${lastErr}`);
+            // Retry on both 404 (model not found) AND 400 tool error (your screenshot bug)
+            if (response.status === 404 || response.status === 400) continue;
             break;
           }
-          lastErr = d?.error?.message || `Groq ${r.status}: ${JSON.stringify(d).slice(0, 300)}`;
-          console.error("Groq fail:", model, lastErr);
-        } catch (e) { lastErr = e.message; }
+        } catch(e) {
+          lastErr = e.message;
+          continue;
+        }
+      }
+      // If all models failed, data will contain last error
+    } else {
+      // Use OpenAI
+      response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: finalMessages,
+          temperature: 0.7,
+          max_tokens: 1500
+        })
+      });
+      data = await response.json();
+    }
+
+    if (!response.ok) {
+      const errMsg = data?.error?.message || (typeof data?.error === 'string' ? data.error : JSON.stringify(data).slice(0,800));
+      console.log('API error', response.status, errMsg);
+      // Return as friendly reply instead of raw error object to avoid [object Object]
+      return res.status(200).json({ 
+        reply: `Buddy, API error ${response.status}: ${errMsg}\n\nCheck:\n- GROQ_API_KEY valid? Get new one at console.groq.com\n- TAVILY key maybe invalid? Try without it first\n- Model maybe down? Trying fallback...\n\nCurrent: OPENAI ${openaiKey ? 'SET' : 'NO'} | GROQ ${groqKey ? 'SET' : 'NO'} | Source: ${liveSource}`
+      });
+    }
+
+    const reply = data.choices?.[0]?.message?.content || 'No reply';
+
+    const supaUrl = process.env.SUPABASE_URL;
+    const supaKey = process.env.SUPABASE_ANON_KEY;
+    if (supaUrl && supaKey && messages.length) {
+      const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+      if (lastUserMsg) {
+        fetch(`${supaUrl}/rest/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': supaKey,
+            'Authorization': `Bearer ${supaKey}`,
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({ content: lastUserMsg.content, role: 'user' })
+        }).catch(() => {});
       }
     }
 
-    if (!aiResult) return res.status(200).json({ reply: `1. Summary: AI failed\n2. Error: ${lastErr}\n3. Fix: Check Vercel env GEMINI_API_KEY (AQ...) + GROQ_API_KEY - make sure AQ key valid and Groq key has credits`, error: lastErr, images: webImages });
+    return res.status(200).json({ reply });
 
-    let parsed; try { parsed = JSON.parse(aiResult); } catch { parsed = { reply: String(aiResult).slice(0, 2000), actions: [] }; }
-    let reply = (parsed.reply || "Yep bud.").trim().replace(/```[\s\S]*?```/g, "").trim();
-    let actions = Array.isArray(parsed.actions)? parsed.actions : [];
-
-    if (use_db && supabaseUrl && supabaseKey && actions.length) {
-      for (const a of actions) {
-        if (!a?.type ||!a?.data) continue;
-        try {
-          if (a.type === "memory" && a.data.content) await supabaseInsert("memories", { business_id: businessId, content: String(a.data.content).slice(0, 800), role: "user" });
-          if (a.type === "task" && a.data.title) await supabaseInsert("tasks", { business_id: businessId, title: String(a.data.title).slice(0, 400), due_at: a.data.due_at || null, is_done: false });
-          if (a.type === "schedule" && a.data.title) await supabaseInsert("schedules", { business_id: businessId, title: String(a.data.title).slice(0, 400), scheduled_at: a.data.scheduled_at || new Date().toISOString(), status: "pending" });
-        } catch {}
-      }
-    }
-
-    return res.status(200).json({ reply, mode, use_db, images: webImages, provider: geminiKey && aiResult? "gemini" : "groq" });
   } catch (e) {
-    console.error("FATAL:", e);
-    return res.status(500).json({ reply: `1. Server Error: ${e.message}\n2. Fix: Check Vercel Function Logs`, error: e.message });
+    console.error(e);
+    return res.status(500).json({ error: e.message });
   }
 }
