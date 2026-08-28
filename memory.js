@@ -1,9 +1,51 @@
-// memory.js - v2.0 SAFE - Only frontend, no chat.js needed
+// memory.js - v3.0 SINGLE REPO - fetch + localStorage hybrid
 const Memory = {
   key: 'clippy_chat_memory',
   longTermKey: 'clippy_long_term_memory',
+  jsonFile: './memory.json',
   maxMessages: 100,
-  maxStorageSize: 4 * 1024 * 1024,
+  cachedJson: null,
+
+  // NEW: fetch memory.json (kaha data)
+  async loadJson() {
+    try {
+      const res = await fetch(this.jsonFile + '?t=' + Date.now());
+      if (!res.ok) throw new Error('no json');
+      const data = await res.json();
+      this.cachedJson = data;
+      console.log('[Memory v3] Loaded memory.json ✅', data);
+      return data;
+    } catch (e) {
+      console.log('[Memory v3] No memory.json, using localStorage', e);
+      return this.loadLongTerm();
+    }
+  },
+
+  // NEW: save to memory.json object + localStorage
+  async saveJson(newKahaEntry) {
+    try {
+      if (!this.cachedJson) await this.loadJson();
+      if (!this.cachedJson) this.cachedJson = {kaha:[], preferences:{}};
+      if (newKahaEntry) {
+        this.cachedJson.kaha = this.cachedJson.kaha || [];
+        this.cachedJson.kaha.push(newKahaEntry);
+      }
+      // Save to localStorage as backup
+      localStorage.setItem(this.longTermKey, JSON.stringify(this.cachedJson));
+      console.log('[Memory v3] Saved to cache, now download memory.json manually');
+      // Trigger download for you to commit to GitHub/Vercel
+      this.downloadJson();
+      return this.cachedJson;
+    } catch(e) { console.error(e); }
+  },
+
+  downloadJson() {
+    const blob = new Blob([JSON.stringify(this.cachedJson, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'memory.json';
+    a.click();
+  },
 
   load() {
     try {
@@ -18,8 +60,8 @@ const Memory = {
   loadLongTerm() {
     try {
       const raw = localStorage.getItem(this.longTermKey);
-      return raw? JSON.parse(raw) : {};
-    } catch { return {}; }
+      return raw? JSON.parse(raw) : {kaha:[]};
+    } catch { return {kaha:[]}; }
   },
 
   saveLongTerm(key, value) {
@@ -28,6 +70,7 @@ const Memory = {
       data[key] = value;
       data._updated = new Date().toISOString();
       localStorage.setItem(this.longTermKey, JSON.stringify(data));
+      this.cachedJson = data;
       return data;
     } catch(e) {}
   },
@@ -38,7 +81,6 @@ const Memory = {
     const prefs = this.loadLongTerm();
     let found = false;
 
-    // "use later instead of tomorrow" - YOUR FIX
     if (lower.includes('use') && lower.includes('instead of')) {
       const m = content.match(/use\s+(.+?)\s+instead of\s+(.+)/i);
       if (m) {
@@ -58,7 +100,10 @@ const Memory = {
       prefs['last_schedule'] = content.slice(0,200);
       found = true;
     }
-    if (found) localStorage.setItem(this.longTermKey, JSON.stringify(prefs));
+    if (found) {
+      localStorage.setItem(this.longTermKey, JSON.stringify(prefs));
+      this.cachedJson = prefs;
+    }
     return found? prefs : null;
   },
 
@@ -80,7 +125,7 @@ const Memory = {
 
   clear() {
     localStorage.removeItem(this.key);
-    console.log('[Memory v2] Cleared chat only, long-term kept');
+    console.log('[Memory v3] Cleared chat only, long-term kept');
   },
 
   clearAll() {
@@ -88,10 +133,11 @@ const Memory = {
     localStorage.removeItem(this.longTermKey);
   },
 
-  init(defaultMessages) {
+  async init(defaultMessages) {
+    await this.loadJson(); // NEW: auto load memory.json
     const saved = this.load();
     const lt = this.loadLongTerm();
-    if (lt.later_not_tomorrow) console.log('[Memory v2] Using later not tomorrow ✅');
+    if (lt.later_not_tomorrow) console.log('[Memory v3] Using later not tomorrow ✅');
     if (saved && saved.length > 1) return saved;
     return defaultMessages;
   }
